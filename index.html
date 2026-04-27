@@ -307,7 +307,7 @@
   #canvasWrap {
     padding: 0;
     position: relative;
-    height: 220px;
+    height: 320px;
     background: var(--bg);
     border-bottom: 1px solid var(--border);
     overflow: hidden;
@@ -560,6 +560,7 @@
     <button class="tf-pill" data-ticker="DOGE">DOGE</button>
   </div>
   <button id="analysisBtn">▶ RUN ANALYSIS</button>
+  <span style="font-size:9px;color:var(--text3);margin-left:6px">PRESS ENTER OR [R] TO RERUN</span>
 </div>
 
 <!-- Status bar -->
@@ -697,6 +698,13 @@
       <div class="deriv-row">
         <span class="deriv-key">24H BYBIT VOL</span>
         <span class="deriv-val" id="d-bybit-vol">—</span>
+      </div>
+    </div>
+
+    <div class="deriv-section">
+      <div class="deriv-section-title">ORDER BLOCKS (SMC)</div>
+      <div id="ob-container">
+        <div class="empty-state" style="height:60px;font-size:9px">RUN ANALYSIS FIRST</div>
       </div>
     </div>
 
@@ -1284,89 +1292,290 @@ async function fetchMultiTF(symbol) {
 }
 
 // ═══════════════════════════════════════════════
-// CHART RENDERER
+// CHART RENDERER — FULL FEATURED
 // ═══════════════════════════════════════════════
-function renderChart(candles, stData) {
+// Stores last render state for resize
+let _lastChartState = null;
+
+function renderChart(candles, stData, fvgs, swings, srLevels) {
+  _lastChartState = { candles, stData, fvgs, swings, srLevels };
+
   const canvas = document.getElementById('priceCanvas');
-  const wrap = document.getElementById('canvasWrap');
-  canvas.width = wrap.offsetWidth || 600;
-  canvas.height = wrap.offsetHeight || 220;
+  const wrap   = document.getElementById('canvasWrap');
+  const dpr    = window.devicePixelRatio || 1;
+  const W0 = wrap.offsetWidth  || 640;
+  const H0 = wrap.offsetHeight || 320;
+  canvas.width  = W0 * dpr;
+  canvas.height = H0 * dpr;
+  canvas.style.width  = W0 + 'px';
+  canvas.style.height = H0 + 'px';
   const ctx = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height;
+  ctx.scale(dpr, dpr);
+  const W = W0, H = H0;
   ctx.clearRect(0, 0, W, H);
 
-  const display = candles.slice(-80);
+  // Layout zones
+  const CHART_H  = Math.floor(H * 0.60);
+  const VOL_H    = Math.floor(H * 0.12);
+  const RSI_H    = Math.floor(H * 0.18);
+  const PAD_BOT  = H - CHART_H - VOL_H - RSI_H;
+  const pad = { top: 14, left: 4, right: 68 };
+  const chartTop = pad.top;
+  const volTop   = chartTop + CHART_H + 2;
+  const rsiTop   = volTop + VOL_H + 2;
+
+  const DISPLAY_BARS = Math.min(80, candles.length);
+  const display = candles.slice(-DISPLAY_BARS);
+  const n = display.length;
+  const allCandles = candles;
+
+  const cw = (W - pad.left - pad.right) / n;
+  const barW = Math.max(cw * 0.72, 1);
+
+  // Price range (with 4% padding)
   const prices = display.flatMap(c => [c.high, c.low]);
-  const minP = Math.min(...prices), maxP = Math.max(...prices);
+  const rawMin = Math.min(...prices), rawMax = Math.max(...prices);
+  const pPad = (rawMax - rawMin) * 0.04;
+  const minP = rawMin - pPad, maxP = rawMax + pPad;
   const pRange = maxP - minP || 1;
-  const pad = { top: 10, bottom: 20, left: 10, right: 60 };
-  const cw = (W - pad.left - pad.right) / display.length;
-  const ph = H - pad.top - pad.bottom;
 
-  const px = i => pad.left + i * cw + cw * 0.15;
-  const py = p => pad.top + ph * (1 - (p - minP) / pRange);
+  // Coordinate helpers
+  const cx  = i => pad.left + i * cw + cw * 0.14;
+  const cxm = i => pad.left + i * cw + cw * 0.14 + barW / 2;  // midpoint
+  const py  = (p, top, h) => top + h * (1 - (p - minP) / pRange);
 
-  // Grid
-  ctx.strokeStyle = 'rgba(42,42,31,0.5)';
+  // ── Background fill (trend color) ──
+  const lastTrend = stData.trend[allCandles.length - 1];
+  ctx.fillStyle = lastTrend === 1 ? 'rgba(0,230,118,0.025)' : 'rgba(255,61,61,0.025)';
+  ctx.fillRect(pad.left, chartTop, W - pad.left - pad.right, CHART_H);
+
+  // ── Grid lines ──
+  ctx.font = '8px IBM Plex Mono';
+  ctx.strokeStyle = 'rgba(42,42,31,0.55)';
   ctx.lineWidth = 0.5;
-  for (let i = 0; i <= 4; i++) {
-    const y = pad.top + (ph / 4) * i;
+  for (let i = 0; i <= 5; i++) {
+    const y = chartTop + (CHART_H / 5) * i;
+    const price = maxP - (pRange / 5) * i;
     ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
-    const price = maxP - (pRange / 4) * i;
     ctx.fillStyle = '#5a5035';
-    ctx.font = '9px IBM Plex Mono';
-    ctx.fillText(fmtPrice(price), W - pad.right + 4, y + 3);
+    ctx.fillText(fmtPrice(price), W - pad.right + 3, y + 3);
+  }
+  // Vertical grid every 10 bars
+  for (let i = 0; i < n; i += 10) {
+    const x = cx(i);
+    ctx.strokeStyle = 'rgba(42,42,31,0.3)';
+    ctx.beginPath(); ctx.moveTo(x, chartTop); ctx.lineTo(x, chartTop + CHART_H); ctx.stroke();
+    // Time label
+    if (display[i]) {
+      const d = new Date(display[i].time);
+      const lbl = d.getUTCMonth()+1 + '/' + d.getUTCDate() + ' ' + String(d.getUTCHours()).padStart(2,'0') + ':' + String(d.getUTCMinutes()).padStart(2,'0');
+      ctx.fillStyle = '#3a3020';
+      ctx.fillText(lbl, x - 10, chartTop + CHART_H + 10);
+    }
   }
 
-  // SuperTrend line
-  ctx.beginPath();
-  let started = false;
-  for (let i = 0; i < display.length; i++) {
-    const ai = candles.length - display.length + i;
-    const stv = stData.stLine[ai];
-    if (!stv) continue;
-    const x = px(i) + cw * 0.35, y = py(stv);
-    if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+  // ── FVG Boxes (draw behind candles) ──
+  if (fvgs) {
+    for (const g of fvgs.slice(-8)) {
+      if (g.filled) continue;
+      const top  = py(g.top, chartTop, CHART_H);
+      const bot  = py(g.bottom, chartTop, CHART_H);
+      const h    = Math.abs(bot - top);
+      ctx.fillStyle = g.type === 'bull' ? 'rgba(0,230,118,0.07)' : 'rgba(255,61,61,0.07)';
+      ctx.fillRect(pad.left, Math.min(top, bot), W - pad.left - pad.right, Math.max(h, 1));
+      ctx.strokeStyle = g.type === 'bull' ? 'rgba(0,230,118,0.25)' : 'rgba(255,61,61,0.25)';
+      ctx.lineWidth = 0.5;
+      ctx.setLineDash([2, 3]);
+      ctx.strokeRect(pad.left, Math.min(top, bot), W - pad.left - pad.right, Math.max(h, 1));
+      ctx.setLineDash([]);
+      ctx.fillStyle = g.type === 'bull' ? 'rgba(0,230,118,0.6)' : 'rgba(255,61,61,0.6)';
+      ctx.font = '8px IBM Plex Mono';
+      ctx.fillText(g.type === 'bull' ? 'BFVG' : 'SFVG', W - pad.right + 3, Math.min(top, bot) + 8);
+    }
   }
-  ctx.strokeStyle = '#ff8f00';
-  ctx.lineWidth = 1;
-  ctx.setLineDash([3, 2]);
-  ctx.stroke();
+
+  // ── S/R Lines ──
+  if (srLevels) {
+    for (const l of srLevels.slice(0, 8)) {
+      if (l.price < minP || l.price > maxP) continue;
+      const y = py(l.price, chartTop, CHART_H);
+      ctx.strokeStyle = l.zone === 'resistance' ? 'rgba(255,61,61,0.4)' : 'rgba(0,230,118,0.4)';
+      ctx.lineWidth = 0.7;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = l.zone === 'resistance' ? 'rgba(255,61,61,0.7)' : 'rgba(0,230,118,0.7)';
+      ctx.font = '8px IBM Plex Mono';
+      ctx.fillText((l.zone === 'resistance' ? 'R' : 'S') + fmtPrice(l.price), W - pad.right + 3, y + 3);
+    }
+  }
+
+  // ── Premium / Discount / Equilibrium zones ──
+  if (swings) {
+    const lastSH = swings.highs.length > 0 ? swings.highs[swings.highs.length-1].price : null;
+    const lastSL = swings.lows.length  > 0 ? swings.lows[swings.lows.length-1].price  : null;
+    if (lastSH && lastSL && lastSH > lastSL) {
+      const rng    = lastSH - lastSL;
+      const prem   = lastSH - rng * 0.25;
+      const disc   = lastSL + rng * 0.25;
+      const equil  = (lastSH + lastSL) / 2;
+      const eqPad  = rng * 0.03;
+      // Equilibrium band
+      if (equil + eqPad <= maxP && equil - eqPad >= minP) {
+        const yHi = py(equil + eqPad, chartTop, CHART_H);
+        const yLo = py(equil - eqPad, chartTop, CHART_H);
+        ctx.fillStyle = 'rgba(255,179,0,0.05)';
+        ctx.fillRect(pad.left, yHi, W - pad.left - pad.right, yLo - yHi);
+        ctx.strokeStyle = 'rgba(255,179,0,0.2)';
+        ctx.lineWidth = 0.5;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath(); ctx.moveTo(pad.left, py(equil, chartTop, CHART_H)); ctx.lineTo(W - pad.right, py(equil, chartTop, CHART_H)); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(255,213,79,0.5)';
+        ctx.font = '8px IBM Plex Mono';
+        ctx.fillText('EQ', W - pad.right + 3, py(equil, chartTop, CHART_H) + 3);
+      }
+    }
+  }
+
+  // ── SuperTrend Line ──
+  ctx.lineWidth = 1.5;
+  let prevX = null, prevY = null;
+  for (let i = 0; i < n; i++) {
+    const ai  = allCandles.length - n + i;
+    const stv = stData.stLine[ai];
+    const tr  = stData.trend[ai];
+    if (!stv || stv < minP || stv > maxP) { prevX = null; continue; }
+    const x = cxm(i), y = py(stv, chartTop, CHART_H);
+    ctx.strokeStyle = tr === 1 ? 'rgba(0,230,118,0.8)' : 'rgba(255,61,61,0.8)';
+    ctx.setLineDash([3, 2]);
+    if (prevX !== null) {
+      ctx.beginPath(); ctx.moveTo(prevX, prevY); ctx.lineTo(x, y); ctx.stroke();
+    }
+    prevX = x; prevY = y;
+  }
   ctx.setLineDash([]);
 
-  // Candles
-  for (let i = 0; i < display.length; i++) {
-    const c = display[i];
-    const ai = candles.length - display.length + i;
+  // ── Candles ──
+  for (let i = 0; i < n; i++) {
+    const c   = display[i];
+    const ai  = allCandles.length - n + i;
     const bull = c.close >= c.open;
-    const trend = stData.trend[ai];
-    const col = trend === 1 ? '#00e676' : '#ff3d3d';
-    const dimCol = trend === 1 ? 'rgba(0,230,118,0.5)' : 'rgba(255,61,61,0.5)';
+    const tr   = stData.trend[ai] || 1;
+    const bullCol = '#00e676', bearCol = '#ff3d3d';
+    const col  = bull ? bullCol : bearCol;
+    const dimCol = bull ? 'rgba(0,230,118,0.45)' : 'rgba(255,61,61,0.45)';
 
-    const x = px(i);
-    const barW = cw * 0.7;
-    const bodyTop = py(Math.max(c.open, c.close));
-    const bodyBot = py(Math.min(c.open, c.close));
-    const bodyH = Math.max(bodyBot - bodyTop, 1);
+    const x     = cx(i);
+    const ymid  = cxm(i);
+    const bTop  = py(Math.max(c.open, c.close), chartTop, CHART_H);
+    const bBot  = py(Math.min(c.open, c.close), chartTop, CHART_H);
+    const bH    = Math.max(bBot - bTop, 1);
 
     // Wick
-    ctx.strokeStyle = dimCol;
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.moveTo(x + barW/2, py(c.high));
-    ctx.lineTo(x + barW/2, py(c.low));
-    ctx.stroke();
+    ctx.strokeStyle = dimCol; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(ymid, py(c.high, chartTop, CHART_H)); ctx.lineTo(ymid, py(c.low, chartTop, CHART_H)); ctx.stroke();
 
     // Body
     if (bull) {
-      ctx.strokeStyle = col;
-      ctx.lineWidth = 0.8;
-      ctx.strokeRect(x, bodyTop, barW, bodyH);
+      ctx.strokeStyle = col; ctx.lineWidth = 0.8;
+      ctx.strokeRect(x, bTop, barW, bH);
     } else {
       ctx.fillStyle = col;
-      ctx.fillRect(x, bodyTop, barW, Math.max(bodyH, 1));
+      ctx.fillRect(x, bTop, barW, bH);
     }
   }
+
+  // ── Swing High / Low markers ──
+  if (swings) {
+    ctx.font = '8px IBM Plex Mono';
+    for (const sh of swings.highs.slice(-4)) {
+      const si = display.findIndex(c => c.time === sh.time);
+      if (si < 0) continue;
+      const y = py(sh.price, chartTop, CHART_H) - 8;
+      ctx.fillStyle = 'rgba(255,61,61,0.7)';
+      ctx.fillText('▼', cxm(si) - 3, y);
+    }
+    for (const sl of swings.lows.slice(-4)) {
+      const si = display.findIndex(c => c.time === sl.time);
+      if (si < 0) continue;
+      const y = py(sl.price, chartTop, CHART_H) + 10;
+      ctx.fillStyle = 'rgba(0,230,118,0.7)';
+      ctx.fillText('▲', cxm(si) - 3, y);
+    }
+  }
+
+  // ── Current price line ──
+  const lastClose = display[n-1].close;
+  const yClose = py(lastClose, chartTop, CHART_H);
+  ctx.strokeStyle = 'rgba(255,213,79,0.7)'; ctx.lineWidth = 0.8;
+  ctx.setLineDash([2, 2]);
+  ctx.beginPath(); ctx.moveTo(pad.left, yClose); ctx.lineTo(W - pad.right, yClose); ctx.stroke();
+  ctx.setLineDash([]);
+  // Price tag
+  ctx.fillStyle = '#ff8f00';
+  ctx.fillRect(W - pad.right, yClose - 6, pad.right - 1, 12);
+  ctx.fillStyle = '#000';
+  ctx.font = '8px IBM Plex Mono';
+  ctx.fillText(fmtPrice(lastClose), W - pad.right + 2, yClose + 3);
+
+  // ── Volume bars ──
+  const vols = display.map(c => c.vol);
+  const maxVol = Math.max(...vols) || 1;
+  for (let i = 0; i < n; i++) {
+    const c    = display[i];
+    const bull = c.close >= c.open;
+    const vH   = (c.vol / maxVol) * (VOL_H - 2);
+    ctx.fillStyle = bull ? 'rgba(0,230,118,0.35)' : 'rgba(255,61,61,0.35)';
+    ctx.fillRect(cx(i), volTop + VOL_H - vH, barW, vH);
+  }
+  // Vol label
+  ctx.fillStyle = '#3a3020'; ctx.font = '8px IBM Plex Mono';
+  ctx.fillText('VOL', W - pad.right + 3, volTop + 9);
+
+  // ── RSI sub-chart ──
+  const rsiArr = calcRSI(allCandles.map(c => c.close), 14);
+  ctx.fillStyle = 'rgba(10,10,8,0.5)';
+  ctx.fillRect(pad.left, rsiTop, W - pad.left - pad.right, RSI_H);
+
+  // RSI grid
+  ctx.fillStyle = '#3a3020'; ctx.font = '8px IBM Plex Mono';
+  ctx.fillText('RSI(14)', W - pad.right + 3, rsiTop + 9);
+  for (const lvl of [30, 50, 70]) {
+    const y = rsiTop + RSI_H * (1 - lvl / 100);
+    ctx.strokeStyle = lvl === 50 ? 'rgba(255,179,0,0.2)' : 'rgba(90,80,53,0.4)';
+    ctx.lineWidth = 0.5; ctx.setLineDash(lvl === 50 ? [4,3] : [2,3]);
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#3a3020';
+    ctx.fillText(lvl, W - pad.right + 3, y + 3);
+  }
+  // RSI OS/OB fill
+  ctx.fillStyle = 'rgba(0,230,118,0.06)';
+  ctx.fillRect(pad.left, rsiTop + RSI_H * 0.7, W - pad.left - pad.right, RSI_H * 0.3);
+  ctx.fillStyle = 'rgba(255,61,61,0.06)';
+  ctx.fillRect(pad.left, rsiTop, W - pad.left - pad.right, RSI_H * 0.3);
+
+  // RSI line
+  ctx.beginPath();
+  let rsiStarted = false;
+  for (let i = 0; i < n; i++) {
+    const ai  = allCandles.length - n + i;
+    const r   = rsiArr[ai];
+    if (r == null || isNaN(r)) continue;
+    const x = cxm(i), y = rsiTop + RSI_H * (1 - r / 100);
+    if (!rsiStarted) { ctx.moveTo(x, y); rsiStarted = true; } else ctx.lineTo(x, y);
+  }
+  const lastRsi = rsiArr[rsiArr.length - 1] || 50;
+  ctx.strokeStyle = lastRsi > 70 ? '#ff3d3d' : lastRsi < 30 ? '#00e676' : '#ffb300';
+  ctx.lineWidth = 1.2; ctx.stroke();
+
+  // Current RSI value
+  const yLastRsi = rsiTop + RSI_H * (1 - lastRsi / 100);
+  ctx.fillStyle = lastRsi > 70 ? '#ff3d3d' : lastRsi < 30 ? '#00e676' : '#ffb300';
+  ctx.fillRect(W - pad.right, yLastRsi - 5, pad.right - 1, 10);
+  ctx.fillStyle = '#000'; ctx.font = '8px IBM Plex Mono';
+  ctx.fillText(lastRsi.toFixed(1), W - pad.right + 2, yLastRsi + 3);
 }
 
 // ═══════════════════════════════════════════════
@@ -1770,7 +1979,19 @@ async function runAnalysis() {
     updateMultiTF(multiTFCandles, tf);
     updateSRLevels(srLevels, currentPrice);
     updateTradeIdeas(tradeIdeas);
-    renderChart(candles, stData);
+    renderChart(candles, stData, fvgs, swings, srLevels);
+
+    // Order blocks
+    const obs = findOrderBlocks(candles, swings);
+    const obHtml = obs.length === 0 ? '<div class="empty-state" style="height:50px;font-size:9px">NONE DETECTED</div>' :
+      obs.slice(-6).map(ob => {
+        const dist = ((ob.high - currentPrice) / currentPrice * 100).toFixed(2);
+        return `<div class="deriv-row">
+          <span class="deriv-key"><span class="tag ${ob.type==='bull'?'bull':'bear'}" style="margin-right:4px">${ob.type==='bull'?'BULL OB':'BEAR OB'}</span>${fmtPrice(ob.low)}–${fmtPrice(ob.high)}</span>
+          <span class="deriv-val ${parseFloat(dist)>0?'down':'up'}">${parseFloat(dist)>0?'+':''}${dist}%</span>
+        </div>`;
+      }).join('');
+    document.getElementById('ob-container').innerHTML = obHtml;
 
     // Status
     document.getElementById('last-update-wrap').style.display = 'flex';
@@ -1797,8 +2018,103 @@ async function runAnalysis() {
 }
 
 // ═══════════════════════════════════════════════
-// EVENT LISTENERS
+// ORDER BLOCK DETECTION
 // ═══════════════════════════════════════════════
+function findOrderBlocks(candles, swings) {
+  const obs = [];
+  const { highs, lows } = swings;
+  const n = candles.length;
+
+  // Bullish OB: last down candle before a strong up move that creates a swing low
+  for (const sl of lows.slice(-3)) {
+    const idx = sl.idx;
+    if (idx < 3) continue;
+    // Find last bearish candle before swing low
+    for (let i = idx - 1; i >= Math.max(0, idx - 5); i--) {
+      if (candles[i].close < candles[i].open) {
+        obs.push({ type: 'bull', high: candles[i].high, low: candles[i].low, idx: i, time: candles[i].time });
+        break;
+      }
+    }
+  }
+  // Bearish OB: last up candle before a strong down move that creates a swing high
+  for (const sh of highs.slice(-3)) {
+    const idx = sh.idx;
+    if (idx < 3) continue;
+    for (let i = idx - 1; i >= Math.max(0, idx - 5); i--) {
+      if (candles[i].close > candles[i].open) {
+        obs.push({ type: 'bear', high: candles[i].high, low: candles[i].low, idx: i, time: candles[i].time });
+        break;
+      }
+    }
+  }
+  return obs;
+}
+
+// ═══════════════════════════════════════════════
+// OI HISTORY SPARKLINE
+// ═══════════════════════════════════════════════
+async function fetchOIHistory(symbol) {
+  try {
+    const r = await fetchWithTimeout(`${CFG.BINANCE_FAPI}/openInterestHist?symbol=${symbol}USDT&period=1h&limit=24`);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch(e) { return null; }
+}
+
+function renderOISparkline(oiHistory) {
+  if (!oiHistory || oiHistory.length < 2) return;
+  const vals = oiHistory.map(x => parseFloat(x.sumOpenInterestValue || x.sumOpenInterest || 0));
+  const maxV = Math.max(...vals), minV = Math.min(...vals);
+  const rng = maxV - minV || 1;
+  const n = vals.length;
+  const bars = n;
+  const sparkHtml = `<div style="padding:6px 12px 8px;border-bottom:1px solid var(--border)">
+    <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px">OI HISTORY 24H</div>
+    <svg width="100%" height="32" viewBox="0 0 ${bars*5} 32" preserveAspectRatio="none">
+      ${vals.map((v,i) => {
+        const h = Math.max(2, ((v - minV) / rng) * 28);
+        const chg = i > 0 ? v - vals[i-1] : 0;
+        const col = chg > 0 ? '#00e676' : '#ff3d3d';
+        return `<rect x="${i*5}" y="${32-h}" width="4" height="${h}" fill="${col}" opacity="0.7"/>`;
+      }).join('')}
+    </svg>
+    <div style="display:flex;justify-content:space-between;font-size:9px;margin-top:2px">
+      <span style="color:var(--text3)">${fmtCompact(minV)}</span>
+      <span style="color:${vals[n-1]>vals[n-2]?'var(--green)':'var(--red)'}">NOW: ${fmtCompact(vals[n-1])}</span>
+      <span style="color:var(--text3)">${fmtCompact(maxV)}</span>
+    </div>
+  </div>`;
+
+  // Insert after OI section in deriv panel
+  const oiChgEl = document.getElementById('d-oi-chg');
+  if (oiChgEl) {
+    const section = oiChgEl.closest('.deriv-section');
+    if (section) {
+      const existing = section.querySelector('.oi-spark');
+      if (existing) existing.remove();
+      const div = document.createElement('div');
+      div.className = 'oi-spark';
+      div.innerHTML = sparkHtml;
+      section.appendChild(div);
+    }
+  }
+
+  // OI change 24h
+  const oiChgPct = ((vals[n-1] - vals[0]) / vals[0] * 100).toFixed(2);
+  const oiChgEl2 = document.getElementById('d-oi-chg');
+  if (oiChgEl2) {
+    oiChgEl2.textContent = (parseFloat(oiChgPct) > 0 ? '+' : '') + oiChgPct + '%';
+    oiChgEl2.className = 'deriv-val ' + (parseFloat(oiChgPct) > 0 ? 'up' : 'down');
+  }
+}
+
+// ═══════════════════════════════════════════════
+// EVENT LISTENERS + AUTO-REFRESH
+// ═══════════════════════════════════════════════
+let _autoRefreshTimer = null;
+let _lastTicker = '', _lastTF = '1h';
+
 document.getElementById('analysisBtn').addEventListener('click', runAnalysis);
 document.getElementById('tickerInput').addEventListener('keydown', e => { if (e.key === 'Enter') runAnalysis(); });
 
@@ -1809,10 +2125,86 @@ document.querySelectorAll('.tf-pill').forEach(btn => {
   });
 });
 
-// Resize chart on window resize
-window.addEventListener('resize', () => {
-  // Re-render if we have data
+// Auto-refresh toggle — patch the topbar
+const topbarRight = document.querySelector('.topbar-right');
+const autoDiv = document.createElement('div');
+autoDiv.style.cssText = 'display:flex;align-items:center;gap:6px;';
+autoDiv.innerHTML = `
+  <div class="divider"></div>
+  <span style="font-size:10px;color:var(--text2)">AUTO-REFRESH</span>
+  <button id="autoRefreshBtn" style="
+    background:transparent;border:1px solid var(--border2);color:var(--text2);
+    font-family:var(--font-mono);font-size:9px;padding:2px 8px;cursor:pointer;
+    letter-spacing:0.08em;transition:all 0.15s;
+  ">OFF</button>
+  <select id="refreshIntervalSel" style="
+    background:var(--bg3);border:1px solid var(--border2);color:var(--text2);
+    font-family:var(--font-mono);font-size:9px;padding:2px 4px;outline:none;
+  ">
+    <option value="30">30s</option>
+    <option value="60" selected>60s</option>
+    <option value="120">2m</option>
+    <option value="300">5m</option>
+  </select>`;
+topbarRight.appendChild(autoDiv);
+
+let _autoOn = false;
+document.getElementById('autoRefreshBtn').addEventListener('click', function() {
+  _autoOn = !_autoOn;
+  this.textContent = _autoOn ? 'ON' : 'OFF';
+  this.style.color = _autoOn ? 'var(--amber)' : 'var(--text2)';
+  this.style.borderColor = _autoOn ? 'var(--amber)' : 'var(--border2)';
+  if (_autoOn) startAutoRefresh(); else stopAutoRefresh();
 });
+
+function startAutoRefresh() {
+  stopAutoRefresh();
+  const secs = parseInt(document.getElementById('refreshIntervalSel').value) * 1000;
+  _autoRefreshTimer = setInterval(() => {
+    const t = document.getElementById('tickerInput').value.trim().toUpperCase();
+    if (t) runAnalysis();
+  }, secs);
+}
+function stopAutoRefresh() {
+  if (_autoRefreshTimer) { clearInterval(_autoRefreshTimer); _autoRefreshTimer = null; }
+}
+document.getElementById('refreshIntervalSel').addEventListener('change', () => {
+  if (_autoOn) startAutoRefresh();
+});
+
+// ── PATCH runAnalysis to also fetch OI history & render OBs on chart ──
+const _origRunAnalysis = runAnalysis;
+window.runAnalysis = async function() {
+  const ticker = document.getElementById('tickerInput').value.trim().toUpperCase();
+  const tf = document.getElementById('tfSelect').value;
+  _lastTicker = ticker; _lastTF = tf;
+
+  // Call original
+  await _origRunAnalysis();
+
+  // Fetch OI history in background
+  if (ticker) {
+    fetchOIHistory(ticker).then(hist => {
+      if (hist) renderOISparkline(hist);
+    });
+  }
+};
+
+// Resize: re-render chart on window resize
+window.addEventListener('resize', () => {
+  if (_lastChartState) {
+    const { candles, stData, fvgs, swings, srLevels } = _lastChartState;
+    renderChart(candles, stData, fvgs, swings, srLevels);
+  }
+});
+
+// Keyboard shortcut: R = run analysis
+document.addEventListener('keydown', e => {
+  if (e.key === 'r' && !e.ctrlKey && document.activeElement.tagName !== 'INPUT') {
+    runAnalysis();
+  }
+});
+
 </script>
 </body>
 </html>
