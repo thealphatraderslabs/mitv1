@@ -650,7 +650,7 @@ body{
 
 /* OI Sparkline */
 .oi-spark-wrap{padding:6px 12px 8px;}
-.oi-spark-bars{display:flex;gap:1px;align-items:flex-end;height:36px;}
+.oi-spark-bars{display:flex;gap:1px;align-items:flex-end;height:36px;width:100%;}
 .oi-spark-bar{flex:1;min-height:3px;background:var(--green-dim);}
 .oi-spark-bar.up{background:rgba(0,230,118,0.7);}
 .oi-spark-bar.down{background:rgba(255,68,68,0.6);}
@@ -2543,6 +2543,7 @@ function renderOISparkline(hist) {
   const wrap = document.getElementById('oi-spark');
   if (!wrap || !hist || hist.length < 2) return;
   wrap.innerHTML = '';
+  const CONTAINER_H = 36; // matches CSS height in px
   // Prefer USD value for visible variance, fall back to contracts
   const vals = hist.map(x => {
     const usd = parseFloat(x.sumOpenInterestValue || 0);
@@ -2553,15 +2554,16 @@ function renderOISparkline(hist) {
   const maxV = Math.max(...vals);
   const minV = Math.min(...vals);
   const range = maxV - minV;
-  const MIN_H = 15; // minimum bar height % so flat data still shows
-  const MAX_H = 100;
+  const MIN_PX = 4;  // minimum bar height in px
+  const MAX_PX = CONTAINER_H; // maximum bar height in px
   vals.forEach((v, i) => {
-    // Normalize to MIN_H–MAX_H range so small variances are visible
-    const pct = range > 0 ? MIN_H + ((v - minV) / range) * (MAX_H - MIN_H) : MIN_H;
+    const px = range > 0
+      ? MIN_PX + ((v - minV) / range) * (MAX_PX - MIN_PX)
+      : MAX_PX * 0.5;
     const bar = document.createElement('div');
     const dir = i > 0 ? (vals[i] >= vals[i-1] ? 'up' : 'down') : 'up';
     bar.className = 'oi-spark-bar ' + dir;
-    bar.style.height = pct + '%';
+    bar.style.height = Math.round(px) + 'px';
     bar.title = '$' + fmtCompact(v);
     wrap.appendChild(bar);
   });
