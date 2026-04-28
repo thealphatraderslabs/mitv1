@@ -1524,8 +1524,117 @@ function cacheGet(key) {
 function cacheSet(key, data) { _cache[key] = { data, ts: Date.now() }; }
 
 // ═══════════════════════════════════════════════════════════════
-// CLOCK
+// NAMESPACE LAYER — API | ENGINE | DECISION | UI
+// Even in a single file, these boundaries enforce flow discipline:
+//   API  →  ENGINE  →  DECISION  →  UI
+// Nothing skips layers. UI never calls ENGINE directly.
 // ═══════════════════════════════════════════════════════════════
+
+// ── ENGINE namespace: pure calculations, no DOM, no fetch ──
+const ENGINE = {
+
+  // Entry quality: where is price in the swing range?
+  // Returns { quality, position, reason }
+  entryQuality(currentPrice, swingHigh, swingLow, bias) {
+    if (!swingHigh || !swingLow || swingHigh <= swingLow)
+      return { quality: 'unknown', position: 0.5, reason: 'NO_SWING_DATA' };
+    const position = (currentPrice - swingLow) / (swingHigh - swingLow);
+    const pos = Math.max(0, Math.min(1, position));
+    if (bias === 'bullish' || bias === 'bullish_transition') {
+      if (pos < 0.35) return { quality: 'early', position: pos, reason: 'DISCOUNT_ZONE' };
+      if (pos > 0.75) return { quality: 'late',  position: pos, reason: 'PREMIUM_ZONE_BULL' };
+      return                 { quality: 'mid',   position: pos, reason: 'MID_RANGE' };
+    }
+    if (bias === 'bearish' || bias === 'bearish_transition') {
+      if (pos > 0.65) return { quality: 'early', position: pos, reason: 'PREMIUM_ZONE' };
+      if (pos < 0.25) return { quality: 'late',  position: pos, reason: 'DISCOUNT_ZONE_BEAR' };
+      return                 { quality: 'mid',   position: pos, reason: 'MID_RANGE' };
+    }
+    // Neutral bias: extremes = opportunity, centre = no edge
+    if (pos < 0.25 || pos > 0.75) return { quality: 'early',   position: pos, reason: 'EXTREME_RANGE' };
+    if (pos > 0.35 && pos < 0.65) return { quality: 'late',    position: pos, reason: 'DEAD_CENTRE' };
+    return                                { quality: 'mid',     position: pos, reason: 'NEAR_EXTREME' };
+  },
+
+  // Score multiplier from entry quality (pure number, no side effects)
+  entryMultiplier(quality, hasFreshPullback) {
+    if (quality === 'early') return hasFreshPullback ? 1.15 * 1.05 : 1.15;
+    if (quality === 'late')  return 0.70;
+    return 1.0; // mid = neutral
+  },
+};
+
+// ── DECISION namespace: validation + rejection logic ──
+// This is the gate. If a setup is contradictory, it dies here.
+// Returns { valid: bool, reason: string, penalty: number 0..1 }
+const DECISION = {
+
+  // Rule 1: Bias must not directly conflict with structure break direction
+  checkBiasConflict(bias, struct) {
+    if (bias === 'bullish' && struct.recentBOS_down)
+      return { valid: false, reason: 'BULL_BIAS_BEAR_BOS', penalty: 0 };
+    if (bias === 'bearish' && struct.recentBOS_up)
+      return { valid: false, reason: 'BEAR_BIAS_BULL_BOS', penalty: 0 };
+    return { valid: true, reason: 'OK', penalty: 1.0 };
+  },
+
+  // Rule 2: Late entry at opposing extreme is a hard reject for high-conviction signals
+  checkEntryExtreme(entryQuality, bias, marketState) {
+    if (entryQuality === 'late' && marketState === 'EXPANSION')
+      return { valid: false, reason: 'LATE_IN_EXPANSION', penalty: 0 };
+    if (entryQuality === 'late')
+      return { valid: true,  reason: 'LATE_ENTRY_PENALTY', penalty: 0.70 };
+    return { valid: true, reason: 'OK', penalty: 1.0 };
+  },
+
+  // Rule 3: No structure event + no sweep = indecision, not a setup
+  checkCompression(structEvents, liqData, compressionScore) {
+    const noStruct  = !structEvents || structEvents.length === 0;
+    const noSweep   = !liqData || !liqData.sweepDetected;
+    const highComp  = compressionScore > 50;
+    if (noStruct && noSweep && !highComp)
+      return { valid: false, reason: 'NO_STRUCTURE_NO_LIQUIDITY', penalty: 0 };
+    if (noStruct && noSweep && highComp)
+      return { valid: true,  reason: 'COMPRESSION_ONLY', penalty: 0.80 };
+    return { valid: true, reason: 'OK', penalty: 1.0 };
+  },
+
+  // Master validator — runs all rules, returns aggregated result
+  validate(bias, struct, entryQuality, marketState, liqData, structEvents, compressionScore) {
+    const rules = [
+      this.checkBiasConflict(bias, struct),
+      this.checkEntryExtreme(entryQuality, bias, marketState),
+      this.checkCompression(structEvents, liqData, compressionScore),
+    ];
+    const failed = rules.find(r => !r.valid);
+    if (failed) return { valid: false, reason: failed.reason, penalty: 0, rules };
+    const minPenalty = Math.min(...rules.map(r => r.penalty));
+    return { valid: true, reason: 'SETUP_VALID', penalty: minPenalty, rules };
+  },
+};
+
+// ── UI namespace: display helpers that read data, never produce it ──
+const UI = {
+  confidenceColor(score) {
+    return score > 75 ? 'var(--green)' : score >= 55 ? 'var(--gold)' : 'var(--red)';
+  },
+  confidenceLabel(score) {
+    return score > 75 ? 'High' : score >= 55 ? 'Medium' : 'Low';
+  },
+  biasClass(bias) {
+    return bias.includes('bull') ? 'bullish' : bias.includes('bear') ? 'bearish' : 'neutral';
+  },
+  reasonBadgeColor(reasonCode) {
+    const map = {
+      VALID_SETUP: 'var(--green)', SWEEP_NO_BOS: 'var(--gold)',
+      INDUCEMENT_ONLY: 'var(--blue)', STRUCTURE_NO_LIQUIDITY: 'var(--muted)',
+      NO_STRUCTURE: 'var(--muted)', BULL_BIAS_BEAR_BOS: 'var(--red)',
+      BEAR_BIAS_BULL_BOS: 'var(--red)', LATE_IN_EXPANSION: 'var(--red)',
+      LATE_ENTRY_PENALTY: 'var(--gold)', COMPRESSION_ONLY: 'var(--gold)',
+    };
+    return map[reasonCode] || 'var(--muted)';
+  },
+};
 function updateClock() {
   const now = new Date();
   const t = now.toUTCString().slice(17,25);
@@ -2064,17 +2173,20 @@ function scoreSymbol(candles, derivs) {
     baseScore *= 1.1;
   }
 
-  // ── STEP 6B: ENTRY QUALITY MULTIPLIER — applied after bias mults ──
-  if (entryQuality === 'early') {
-    baseScore *= 1.15; // early-stage discount/premium = boost
-    if (hasFreshPullback) baseScore *= 1.05; // extra boost for active pullback
-  } else if (entryQuality === 'late') {
-    baseScore *= 0.70; // late-stage extended = strong penalty
-    // BOS in premium (bull) or discount (bear) = additional downgrade
+  // ── STEP 6B: ENTRY QUALITY MULTIPLIER — via ENGINE namespace ──
+  const _eq = ENGINE.entryQuality(currentPrice,
+    highs.length > 0 ? highs[highs.length-1].price : currentPrice,
+    lows.length  > 0 ? lows[lows.length-1].price   : currentPrice,
+    bias);
+  // Override legacy entryQuality with ENGINE result for consistency
+  const _eqQuality = _eq.quality !== 'unknown' ? _eq.quality : entryQuality;
+  baseScore *= ENGINE.entryMultiplier(_eqQuality, hasFreshPullback);
+
+  // Aggressive late penalty on BOS-in-wrong-zone (unchanged)
+  if (_eqQuality === 'late') {
     if (isBullBias && recentBOS_up && swingDistance > 0.75) baseScore *= 0.85;
     if (isBearBias && recentBOS_down && swingDistance < 0.25) baseScore *= 0.85;
   }
-  // mid = neutral, no change
 
   // ── STEP 7: STRICT BREAKOUT GATE ──
   const nearKeyLevel = nearLevels.length > 0;
@@ -2115,7 +2227,17 @@ function scoreSymbol(candles, derivs) {
     if (marketState === 'TRANSITION') derivImpact *= 1.5;
   }
 
-  const finalScore = Math.min(100, Math.max(0, Math.round(baseScore + derivImpact)));
+  const finalScore_raw = Math.min(100, Math.max(0, Math.round(baseScore + derivImpact)));
+
+  // ── DECISION LAYER — validation + rejection gate ──
+  // Runs AFTER all sub-scores. If setup is contradictory, score is killed or penalised.
+  // UI never decides this — DECISION namespace does.
+  const _decision = DECISION.validate(
+    bias, struct, _eqQuality, marketState, liqData, structEvents, compressionScore
+  );
+  const finalScore = _decision.valid
+    ? Math.min(100, Math.max(0, Math.round(finalScore_raw * _decision.penalty)))
+    : 0; // hard reject = score of 0, will not appear in top results
 
   // ── STEP 9: CLASSIFICATION ──
   let classification = 'WATCH LIST';
@@ -2220,13 +2342,17 @@ function scoreSymbol(candles, derivs) {
   return {
     score: finalScore, marketState, transitionType,
     classification, classType, bias,
-    entryQuality, swingDistance,
+    entryQuality: _eqQuality, swingDistance,
     tags: tags.slice(0, 6), explanation,
     er, tqi, compressionScore, structScore, liquidityScore, trendScore,
     funding: derivs.funding, lsRatio: derivs.lsRatio, stTrend,
     eqHighs, eqLows,
     // Liquidity engine outputs
     reasonCode, validSetup, sweepDetected, liquidityPresent: liqData.liquidityPresent,
+    // Decision layer outputs
+    decisionValid: _decision.valid,
+    decisionReason: _decision.reason,
+    decisionPenalty: _decision.penalty,
   };
 }
 
@@ -2352,7 +2478,7 @@ async function fetchScannerCandles(symbol, tf, limit=200) {
   } catch(e) { clearTimeout(id); return null; }
 }
 async function fetchScannerDerivs(symbol) {
-  const cacheKey = `derivs:${symbol}`;
+  const cacheKey = `derivs:binance_fapi:${symbol}`;
   const cached = cacheGet(cacheKey);
   if (cached) return cached;
   try {
@@ -2693,8 +2819,6 @@ function detectLiquidity(candles, highs, lows) {
     hasInducement: liquidityPresent,
   };
 }
-
-function renderOrderBlocks(obs, currentPrice) {
   const el = document.getElementById('ob-container');
   if (!el) return;
   if (!obs || obs.length === 0) {
@@ -2789,16 +2913,20 @@ function updatePriceHeader(ticker, ticker24h, candles, stData, er, tqi, rsi) {
   const biasConf = document.getElementById('h-bias-conf');
   // Weighted confidence tier: Structure primary, momentum secondary, derivatives minor
   const _hConfScore = Math.min(100, Math.round(Math.max(bullBiasP, 100-bullBiasP) * 0.8 + (er > 0.4 ? 10 : 0) + (tqi > 0.5 ? 10 : 0)));
-  const _hConfLabel = _hConfScore > 75 ? 'High' : _hConfScore >= 55 ? 'Medium' : 'Low';
+  const _hConfLabel = UI.confidenceLabel(_hConfScore);
+  const _hConfColorVal = UI.confidenceColor(_hConfScore);
   if (bullBiasP >= 62) {
     biasEl.textContent='BULLISH'; biasEl.className='ph-bias-val bullish';
     biasConf.textContent=`Confidence: ${_hConfScore}% (${_hConfLabel})`;
+    biasConf.style.color = _hConfColorVal;
   } else if (bullBiasP <= 38) {
     biasEl.textContent='BEARISH'; biasEl.className='ph-bias-val bearish';
     biasConf.textContent=`Confidence: ${_hConfScore}% (${_hConfLabel})`;
+    biasConf.style.color = _hConfColorVal;
   } else {
     biasEl.textContent='NEUTRAL'; biasEl.className='ph-bias-val neutral';
     biasConf.textContent=`Low Confidence — ${bullBiasP}/${100-bullBiasP}`;
+    biasConf.style.color = 'var(--muted)';
   }
 }
 
@@ -2960,13 +3088,20 @@ function updateSRLevels(srLevels) {
 }
 
 function updateTradeIdeas(data) {
-  const { primaryDir, confPips, bullPct, weightedScore, confidenceLabel, primaryLevels:pl, primaryNarr, counterTxt, counterLevels:cl, counterNarr } = data;
+  const { primaryDir, confPips, bullPct, weightedScore, confidenceLabel, primaryLevels:pl, primaryNarr, counterTxt, counterLevels:cl, counterNarr, tradeRejected, tradeDecisionReason } = data;
   const isLong = primaryDir === 'LONG';
   const bearPct = 100-bullPct;
   const pips = Array.from({length:8},(_,i)=>`<div class="conf-pip${i<confPips?' filled':''}"></div>`).join('');
-  const confColor = weightedScore > 75 ? 'var(--green)' : weightedScore >= 55 ? 'var(--gold)' : 'var(--red)';
+  // Use UI namespace for color/label helpers
+  const confColor = UI.confidenceColor(weightedScore);
+  const rejectionBanner = tradeRejected
+    ? `<div style="padding:5px 8px;margin-bottom:6px;background:rgba(255,59,48,0.1);border:1px solid rgba(255,59,48,0.3);font-size:8px;color:var(--red);letter-spacing:0.08em">
+        ⛔ DECISION ENGINE: SETUP REJECTED — ${(tradeDecisionReason||'').replace(/_/g,' ')} — Showing levels for reference only
+       </div>`
+    : '';
   const biasMeter = `
     <div class="bias-meter">
+      ${rejectionBanner}
       <div class="bias-meter-labels">
         <span style="color:var(--green)">BULL ${bullPct}%</span>
         <span style="color:var(--muted);font-size:8px">SMC BIAS SCORE</span>
@@ -2984,10 +3119,10 @@ function updateTradeIdeas(data) {
       </div>
     </div>`;
   const primaryCard = `
-    <div class="trade-card ${isLong?'long':'short'}">
+    <div class="trade-card ${isLong?'long':'short'}" style="${tradeRejected?'opacity:0.65;border-color:rgba(255,59,48,0.4)':''}">
       <div class="trade-dir ${isLong?'long':'short'}">
         ${isLong?'▲':'▼'} PRIMARY: ${primaryDir}
-        <span class="conviction-badge high">HIGH CONVICTION</span>
+        <span class="conviction-badge ${tradeRejected?'low':weightedScore>75?'high':weightedScore>=55?'mid':'low'}">${tradeRejected?'REJECTED':weightedScore>75?'HIGH CONVICTION':weightedScore>=55?'MED CONVICTION':'LOW CONVICTION'}</span>
         <span style="display:flex;align-items:center;gap:4px;margin-left:auto;font-size:8px;color:var(--muted)">CONF <div class="conf-bar">${pips}</div> ${confPips}/8</span>
       </div>
       <div class="trade-levels">
@@ -3073,6 +3208,18 @@ function generateTradeIdeas(candles, stData, swings, fvgs, srLevels, rsi, er, tq
   const totalScore = bullSMC+bearSMC || 1;
   const bullPct = Math.round(bullSMC/totalScore*100);
   const primaryDir = bullSMC>=bearSMC ? 'LONG' : 'SHORT';
+  const tradesBias = primaryDir === 'LONG' ? 'bullish' : 'bearish';
+
+  // ── ENGINE: entry quality via namespace (consistent with scoreSymbol) ──
+  const _tradeEQ = ENGINE.entryQuality(currentPrice, lastSH, lastSL, tradesBias);
+
+  // ── DECISION: validate this trade setup before building levels ──
+  const _tradeDecision = DECISION.validate(
+    tradesBias, struct, _tradeEQ.quality, 'RANGE', // RANGE = safe default, no liqData here
+    null, struct.events, 0
+  );
+  // If hard rejected, override primaryDir conviction but still show (with warning)
+  const tradeRejected = !_tradeDecision.valid;
 
   // ── WEIGHTED CONFIDENCE SCORE (replaces "100% bullish" static logic) ──
   // Hierarchy: Structure (40%) > Location (25%) > Momentum (20%) > Derivatives (15%)
@@ -3154,12 +3301,18 @@ function generateTradeIdeas(candles, stData, swings, fvgs, srLevels, rsi, er, tq
   const counterTxt = primaryDir==='LONG'?'SHORT':'LONG';
   const compressionTxt = marketCompression ? ' CAUTION: No structure break detected — possible chop. Wait for BOS/CHoCH before entry.' : '';
 
+  const rejectionPrefix = tradeRejected
+    ? `⛔ DECISION ENGINE REJECTED THIS SETUP — ${(_tradeDecision.reason||'').replace(/_/g,' ')}. Showing for reference only. `
+    : (_tradeDecision.penalty < 1.0)
+      ? `⚠ SETUP PENALISED — ${(_tradeDecision.reason||'').replace(/_/g,' ')}. Proceed with caution. `
+      : '';
+
   const primaryLevels = primaryDir==='LONG'
     ? {entry:longEntry,sl:longSL,tp1:longTP1,tp2:longTP2,rr:longRR}
     : {entry:shortEntry,sl:shortSL,tp1:shortTP1,tp2:shortTP2,rr:shortRR};
   const primaryNarr = primaryDir==='LONG'
-    ? `Confidence: ${weightedScore}% (${confidenceLabel}) — weighted: Structure(40%) · Location(25%) · Momentum(20%) · Derivatives(15%). Price in ${zoneTxt} — holding in discount after internal shift. ${structTxt}. ${tqiTxt}. RSI ${rsi?rsi.toFixed(1):'—'} — ${rsi<40?'demand holding, high-probability zone.':rsi<55?'room to push higher if demand holds.':'extended — better entry on pullback.'}${compressionTxt} ${fundTxt}. ${lsTxt}. Entry at ${fmtPrice(longEntry)} (${longEntryReason}), SL below swing low ${fmtPrice(longSL)}.`
-    : `Confidence: ${weightedScore}% (${confidenceLabel}) — weighted: Structure(40%) · Location(25%) · Momentum(20%) · Derivatives(15%). Price in ${zoneTxt} — rejection likely if distribution holds. ${structTxt}. ${tqiTxt}. RSI ${rsi?rsi.toFixed(1):'—'} — ${rsi>65?'extended, distribution likely.':'needs rejection confirmation at resistance.'}${compressionTxt} ${fundTxt}. ${lsTxt}. Entry at ${fmtPrice(shortEntry)} (${shortEntryReason}), SL above swing high ${fmtPrice(shortSL)}.`;
+    ? `${rejectionPrefix}Confidence: ${weightedScore}% (${confidenceLabel}) — weighted: Structure(40%) · Location(25%) · Momentum(20%) · Derivatives(15%). Price in ${zoneTxt} — holding in discount after internal shift. ${structTxt}. ${tqiTxt}. RSI ${rsi?rsi.toFixed(1):'—'} — ${rsi<40?'demand holding, high-probability zone.':rsi<55?'room to push higher if demand holds.':'extended — better entry on pullback.'}${compressionTxt} ${fundTxt}. ${lsTxt}. Entry at ${fmtPrice(longEntry)} (${longEntryReason}), SL below swing low ${fmtPrice(longSL)}.`
+    : `${rejectionPrefix}Confidence: ${weightedScore}% (${confidenceLabel}) — weighted: Structure(40%) · Location(25%) · Momentum(20%) · Derivatives(15%). Price in ${zoneTxt} — rejection likely if distribution holds. ${structTxt}. ${tqiTxt}. RSI ${rsi?rsi.toFixed(1):'—'} — ${rsi>65?'extended, distribution likely.':'needs rejection confirmation at resistance.'}${compressionTxt} ${fundTxt}. ${lsTxt}. Entry at ${fmtPrice(shortEntry)} (${shortEntryReason}), SL above swing high ${fmtPrice(shortSL)}.`;
   const counterLevels = counterTxt==='LONG'
     ? {entry:longEntry,sl:longSL,tp1:longTP1,tp2:longTP2,rr:longRR}
     : {entry:shortEntry,sl:shortSL,tp1:shortTP1,tp2:shortTP2,rr:shortRR};
@@ -3167,7 +3320,7 @@ function generateTradeIdeas(candles, stData, swings, fvgs, srLevels, rsi, er, tq
     ? `Counter-trend SHORT (confidence ${100-weightedScore}% — Low). Valid only on ${inPremium?'rejection candle from premium zone':'CHoCH confirmation on lower TF'}. Entry ${fmtPrice(shortEntry)} (${shortEntryReason}), SL ${fmtPrice(shortSL)}, TP1 ${fmtPrice(shortTP1)}.`
     : `Counter-trend LONG (confidence ${weightedScore}% — Low). Valid only on ${inDiscount?'strong demand reaction at discount zone':'BOS confirmation on lower TF'}. Entry ${fmtPrice(longEntry)} (${longEntryReason}), SL ${fmtPrice(longSL)}, TP1 ${fmtPrice(longTP1)}.`;
 
-  return {primaryDir,confPips,bullPct,weightedScore,confidenceLabel,primaryLevels,primaryNarr,counterTxt,counterLevels,counterNarr,atr,longEntryReason,shortEntryReason};
+  return {primaryDir,confPips,bullPct,weightedScore,confidenceLabel,primaryLevels,primaryNarr,counterTxt,counterLevels,counterNarr,atr,longEntryReason,shortEntryReason,tradeRejected,tradeDecisionReason:_tradeDecision.reason};
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3643,10 +3796,16 @@ function renderRankedList(results) {
     const tier       = coin.score>=75?'high':coin.score>=55?'mid':'low';
 
     // Reason code badge
-    const rcColor = coin.reasonCode==='VALID_SETUP'?'var(--green)':coin.reasonCode==='SWEEP_NO_BOS'?'var(--gold)':coin.reasonCode==='INDUCEMENT_ONLY'?'var(--blue)':'var(--muted)';
+    const rcColor = UI.reasonBadgeColor(coin.reasonCode);
     const rcLabel = coin.reasonCode||'UNKNOWN';
     const sweepBadge = coin.sweepDetected ? `<span class="scan-tag liquidity" style="background:rgba(0,230,118,0.15);color:var(--green);border:1px solid rgba(0,230,118,0.3)">⚡ LIQ SWEEP</span>` : '';
     const validBadge = coin.validSetup    ? `<span class="scan-tag structure" style="background:rgba(0,230,118,0.1);color:var(--green)">✓ VALID SETUP</span>` : '';
+    // Decision layer: show penalty or rejection reason
+    const decisionBadge = (!coin.decisionValid)
+      ? `<span class="scan-tag squeeze" style="opacity:0.7">⛔ ${(coin.decisionReason||'').replace(/_/g,' ')}</span>`
+      : (coin.decisionPenalty < 1.0)
+        ? `<span class="scan-tag neutral" style="color:var(--gold)">⚠ ${(coin.decisionReason||'').replace(/_/g,' ')}</span>`
+        : '';
 
     const card = document.createElement('div');
     card.className = `coin-card tier-${tier}`;
@@ -3667,7 +3826,7 @@ function renderRankedList(results) {
           <div style="font-size:7px;color:${rcColor};letter-spacing:0.08em;text-align:right">${rcLabel.replace(/_/g,' ')}</div>
         </div>
       </div>
-      <div class="coin-tags">${sweepBadge}${validBadge}${coin.tags.map(t=>`<span class="scan-tag ${t.type}">${t.label}</span>`).join('')}</div>
+      <div class="coin-tags">${sweepBadge}${validBadge}${decisionBadge}${coin.tags.map(t=>`<span class="scan-tag ${t.type}">${t.label}</span>`).join('')}</div>
       <div class="coin-explanation">${coin.explanation}</div>
       <div class="coin-meta">
         <div class="coin-meta-item">ER:<span class="coin-meta-val">${(coin.er||0).toFixed(2)}</span></div>
