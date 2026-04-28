@@ -2241,10 +2241,10 @@ async function fetchMultiTF(symbol) {
 }
 async function fetchOIHistory(symbol) {
   try {
-    const r = await fetchWithTimeout(`${CFG.BINANCE_FAPI}/openInterestHist?symbol=${symbol}USDT&period=5m&limit=24`);
+    const r = await fetchWithTimeout(`${CFG.BINANCE_FAPI}/openInterestHist?symbol=${symbol}USDT&period=1h&limit=24`);
     if (!r.ok) return null;
     const d = await r.json();
-    return Array.isArray(d) ? d.map(x => parseFloat(x.sumOpenInterest)) : null;
+    return Array.isArray(d) ? d : null;
   } catch(e) { return null; }
 }
 
@@ -2488,18 +2488,70 @@ function renderChart(candles, stData, fvgs, swings, srLevels) {
   }
 }
 
-// OI Sparkline
-function renderOISparkline(hist) {
+// ═══════════════════════════════════════════════════════════════
+// ORDER BLOCK DETECTION
+// ═══════════════════════════════════════════════════════════════
+function findOrderBlocks(candles, swings) {
+  const obs = [];
+  const { highs, lows } = swings;
+  // Bullish OB: last bearish candle before move that created a swing low
+  for (const sl of lows.slice(-3)) {
+    const idx = sl.idx;
+    if (idx < 3) continue;
+    for (let i = idx - 1; i >= Math.max(0, idx - 5); i--) {
+      if (candles[i].close < candles[i].open) {
+        obs.push({ type: 'bull', high: candles[i].high, low: candles[i].low, idx: i });
+        break;
+      }
+    }
+  }
+  // Bearish OB: last bullish candle before move that created a swing high
+  for (const sh of highs.slice(-3)) {
+    const idx = sh.idx;
+    if (idx < 3) continue;
+    for (let i = idx - 1; i >= Math.max(0, idx - 5); i--) {
+      if (candles[i].close > candles[i].open) {
+        obs.push({ type: 'bear', high: candles[i].high, low: candles[i].low, idx: i });
+        break;
+      }
+    }
+  }
+  return obs;
+}
+
+function renderOrderBlocks(obs, currentPrice) {
+  const el = document.getElementById('ob-container');
+  if (!el) return;
+  if (!obs || obs.length === 0) {
+    el.innerHTML = '<div class="empty-state" style="height:50px;font-size:8px">NONE DETECTED</div>';
+    return;
+  }
+  el.innerHTML = obs.slice(-6).map(ob => {
+    const dist = ((ob.high - currentPrice) / currentPrice * 100).toFixed(2);
+    return `<div class="deriv-row">
+      <span class="deriv-key">
+        <span class="tag ${ob.type === 'bull' ? 'bull' : 'bear'}" style="margin-right:4px">${ob.type === 'bull' ? 'BULL OB' : 'BEAR OB'}</span>
+        ${fmtPrice(ob.low)} – ${fmtPrice(ob.high)}
+      </span>
+      <span class="deriv-val ${parseFloat(dist) > 0 ? 'down' : 'up'}">${parseFloat(dist) > 0 ? '+' : ''}${dist}%</span>
+    </div>`;
+  }).join('');
+}
+
+
   const wrap = document.getElementById('oi-spark');
   if (!wrap || !hist || hist.length < 2) return;
   wrap.innerHTML = '';
-  const maxV = Math.max(...hist) || 1;
-  const minV = Math.min(...hist);
-  hist.forEach((v,i) => {
-    const pct = maxV===minV ? 50 : ((v-minV)/(maxV-minV))*100;
+  // hist is raw API array — parse values
+  const vals = hist.map(x => parseFloat(x.sumOpenInterestValue || x.sumOpenInterest || 0));
+  const maxV = Math.max(...vals) || 1;
+  const minV = Math.min(...vals);
+  const range = maxV - minV || 1;
+  vals.forEach((v, i) => {
+    const pct = ((v - minV) / range) * 100;
     const bar = document.createElement('div');
-    bar.className = 'oi-spark-bar ' + (i>0 ? (hist[i]>=hist[i-1]?'up':'down') : '');
-    bar.style.height = Math.max(2, pct*0.22)+'px';
+    bar.className = 'oi-spark-bar ' + (i > 0 ? (vals[i] >= vals[i-1] ? 'up' : 'down') : '');
+    bar.style.height = Math.max(2, pct * 0.22) + 'px';
     wrap.appendChild(bar);
   });
 }
@@ -2922,6 +2974,22 @@ async function runAnalysis() {
     if (multiTF.status==='fulfilled') updateMultiTF(multiTF.value, tf);
     updateSRLevels(srLevels);
 
+    // Order blocks
+    const obs = findOrderBlocks(c, swings);
+    renderOrderBlocks(obs, currentPrice);
+
+    // Price spread (Binance vs Bybit)
+    if (bybit.value && ticker24h.value) {
+      const bp  = parseFloat(bybit.value.lastPrice || 0);
+      const binP = parseFloat(ticker24h.value.lastPrice || currentPrice);
+      if (bp && binP) {
+        const spread = ((bp - binP) / binP * 100).toFixed(4);
+        const spreadEl = document.getElementById('d-spread');
+        spreadEl.textContent = spread + '%';
+        spreadEl.className = 'deriv-val ' + (Math.abs(parseFloat(spread)) > 0.1 ? 'warn' : '');
+      }
+    }
+
     const tradeData = generateTradeIdeas(c, stData, swings, srLevels, rsi, er, tqi, currentPrice, derivData);
     updateTradeIdeas(tradeData);
 
@@ -3010,8 +3078,8 @@ async function runMarketScan() {
   document.getElementById('drawerScanBtn').disabled = true;
   document.getElementById('drawerCancelBtn').classList.add('show');
   document.getElementById('scanner-empty').style.display = 'none';
-  document.getElementById('ranked-view').style.display = 'none';
-  document.getElementById('heatmap-view').style.display = 'none';
+  document.getElementById('ranked-view').classList.remove('active');
+  document.getElementById('heatmap-view').classList.remove('active');
   document.getElementById('scan-progress-wrap').style.display = 'none';
   document.getElementById('scan-progress-fill').style.width = '0%';
   document.getElementById('scanner-stats').style.display = 'none';
