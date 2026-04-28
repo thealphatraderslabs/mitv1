@@ -1864,7 +1864,7 @@ function detectMarketState(candles, swings, tqi, er, stTrend) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// CONTEXT-AWARE scoreSymbol — FULL REWRITE
+// CONTEXT-AWARE scoreSymbol — WITH ENTRY QUALITY FILTER
 // ═══════════════════════════════════════════════════════════════
 function scoreSymbol(candles, derivs) {
   const closes = candles.map(c => c.close);
@@ -1891,18 +1891,58 @@ function scoreSymbol(candles, derivs) {
   const { recentBOS_up, recentBOS_down, recentCHOCH_up, recentCHOCH_down, events: structEvents } = struct;
 
   let bias = 'neutral';
-  if (recentBOS_down)   bias = 'bearish';
-  else if (recentBOS_up)    bias = 'bullish';
-  else if (recentCHOCH_up)  bias = 'bullish_transition';
-  else if (recentCHOCH_down) bias = 'bearish_transition';
-  else if (stTrend === 1)   bias = 'bullish';
-  else if (stTrend === -1)  bias = 'bearish';
+  if (recentBOS_down)    bias = 'bearish';
+  else if (recentBOS_up)      bias = 'bullish';
+  else if (recentCHOCH_up)    bias = 'bullish_transition';
+  else if (recentCHOCH_down)  bias = 'bearish_transition';
+  else if (stTrend === 1)     bias = 'bullish';
+  else if (stTrend === -1)    bias = 'bearish';
 
   const isBullBias = bias === 'bullish' || bias === 'bullish_transition';
   const isBearBias = bias === 'bearish' || bias === 'bearish_transition';
 
   // ── STEP 2: MARKET STATE + TRANSITION TYPE ──
   const { marketState, transitionType } = detectMarketState(candles, swings, tqi, er, stTrend);
+
+  // ── STEP 2B: ENTRY QUALITY — position in swing range ──
+  let entryQuality = 'mid';    // 'early' | 'mid' | 'late'
+  let swingDistance = 0.5;     // 0 = at swing low, 1 = at swing high
+  let hasFreshPullback = false;
+
+  if (highs.length > 0 && lows.length > 0) {
+    const lastSH = highs[highs.length-1].price;
+    const lastSL = lows[lows.length-1].price;
+    const swingRange = lastSH - lastSL;
+
+    if (swingRange > 0) {
+      swingDistance = (currentPrice - lastSL) / swingRange;
+
+      // For bullish bias: early = price near lows (discount), late = near highs (premium)
+      // For bearish bias: early = price near highs (premium), late = near lows (discount)
+      if (isBullBias) {
+        if (swingDistance < 0.40)      entryQuality = 'early';
+        else if (swingDistance > 0.75) entryQuality = 'late';
+        else                           entryQuality = 'mid';
+      } else if (isBearBias) {
+        if (swingDistance > 0.60)      entryQuality = 'early'; // price high = early for short
+        else if (swingDistance < 0.25) entryQuality = 'late';  // price low = late for short
+        else                           entryQuality = 'mid';
+      } else {
+        // Neutral: extremes are both early opportunities
+        if (swingDistance < 0.25 || swingDistance > 0.75) entryQuality = 'early';
+        else if (swingDistance < 0.35 || swingDistance > 0.65) entryQuality = 'mid';
+        else entryQuality = 'late'; // dead center = no edge
+      }
+
+      // Detect fresh pullback: last 5 candles show retracement toward mean
+      const last5 = closes.slice(-5);
+      const mean5 = last5.reduce((a,b)=>a+b,0) / 5;
+      const pullingBack = isBullBias
+        ? (last5[0] > mean5 && last5[last5.length-1] < mean5) // pulled back from high
+        : (last5[0] < mean5 && last5[last5.length-1] > mean5); // pulled back from low
+      hasFreshPullback = pullingBack && Math.abs(swingDistance - 0.5) > 0.15;
+    }
+  }
 
   // ── STEP 3: SUB-SCORES ──
 
@@ -1911,12 +1951,14 @@ function scoreSymbol(candles, derivs) {
   const nearLevels = srLevels.filter(l => Math.abs(l.dist) < 2.0);
   structScore += Math.min(nearLevels.length * 12, 36);
   if (highs.length > 0 && lows.length > 0) {
-    const lastSH = highs[highs.length-1].price;
-    const lastSL = lows[lows.length-1].price;
-    const rng = lastSH - lastSL || currentPrice * 0.05;
-    const pctInRange = (currentPrice - lastSL) / rng;
-    if (pctInRange < 0.25 || pctInRange > 0.75) structScore += 25;
-    else if (pctInRange < 0.35 || pctInRange > 0.65) structScore += 12;
+    // Structure score rewards price at extremes ONLY when aligned with bias
+    const pctInRange = swingDistance;
+    const atDiscountForBull = isBullBias  && pctInRange < 0.35;
+    const atPremiumForBear  = isBearBias  && pctInRange > 0.65;
+    const atEdge = atDiscountForBull || atPremiumForBear || (!isBullBias && !isBearBias && (pctInRange < 0.25 || pctInRange > 0.75));
+    if (atEdge) structScore += 25;
+    else if (pctInRange < 0.40 || pctInRange > 0.60) structScore += 10;
+    // No bonus for mid-range — neutral zone adds nothing
   }
   if (structEvents.length > 0) structScore += 20;
   const nearFVG = fvgs.filter(g => !g.filled &&
@@ -1933,7 +1975,7 @@ function scoreSymbol(candles, derivs) {
   const avgO = atrOlder.reduce((a,b)=>a+b,0)/Math.max(atrOlder.length,1);
   if (avgO > 0) {
     const cr = avgR / avgO;
-    if (cr < 0.6)      compressionScore += 50;
+    if (cr < 0.6)       compressionScore += 50;
     else if (cr < 0.75) compressionScore += 35;
     else if (cr < 0.85) compressionScore += 20;
     else if (cr < 0.95) compressionScore += 8;
@@ -1951,7 +1993,7 @@ function scoreSymbol(candles, derivs) {
   // Trend score
   let trendScore = 0;
   trendScore += Math.round(tqi * 60);
-  if (er > 0.5)      trendScore += 25;
+  if (er > 0.5)       trendScore += 25;
   else if (er > 0.35) trendScore += 12;
   if (stTrend === 1 && currentPrice > stData.stLine[n-1]) trendScore += 15;
   else if (stTrend === -1 && currentPrice < stData.stLine[n-1]) trendScore += 15;
@@ -1968,13 +2010,12 @@ function scoreSymbol(candles, derivs) {
     for (let j=i+1; j<lows.length; j++)
       if (Math.abs(lows[i].price - lows[j].price) < tolerance) eqLows++;
 
-  // Directional weighting — bias determines which liquidity matters
   if (isBearBias) {
-    liquidityScore += Math.min(eqLows  * 22, 44); // downside = high priority
-    liquidityScore += Math.min(eqHighs * 8,  16); // upside   = low priority
+    liquidityScore += Math.min(eqLows  * 22, 44);
+    liquidityScore += Math.min(eqHighs * 8,  16);
   } else if (isBullBias) {
-    liquidityScore += Math.min(eqHighs * 22, 44); // upside   = high priority
-    liquidityScore += Math.min(eqLows  * 8,  16); // downside = low priority
+    liquidityScore += Math.min(eqHighs * 22, 44);
+    liquidityScore += Math.min(eqLows  * 8,  16);
   } else {
     liquidityScore += Math.min(eqHighs * 18, 36);
     liquidityScore += Math.min(eqLows  * 18, 36);
@@ -1987,16 +2028,15 @@ function scoreSymbol(candles, derivs) {
   let baseScore = 0.40 * structScore + 0.25 * compressionScore + 0.15 * trendScore + 0.15 * liquidityScore;
 
   // ── STEP 6: BIAS-AWARE MULTIPLIERS ──
-  // Determine setup direction from stTrend and structure
   const setupIsBullish = stTrend === 1;
   const setupIsBearish = stTrend === -1;
 
   if (isBearBias && setupIsBullish) {
-    baseScore *= 0.6; // bullish setup in bearish bias = strong penalty
+    baseScore *= 0.6;
   } else if (isBullBias && setupIsBearish) {
     baseScore *= 0.6;
   } else if ((isBearBias && setupIsBearish) || (isBullBias && setupIsBullish)) {
-    baseScore *= 1.1; // aligned = boost
+    baseScore *= 1.1;
   }
 
   // State modifiers
@@ -2010,8 +2050,19 @@ function scoreSymbol(candles, derivs) {
     baseScore *= 1.1;
   }
 
+  // ── STEP 6B: ENTRY QUALITY MULTIPLIER — applied after bias mults ──
+  if (entryQuality === 'early') {
+    baseScore *= 1.15; // early-stage discount/premium = boost
+    if (hasFreshPullback) baseScore *= 1.05; // extra boost for active pullback
+  } else if (entryQuality === 'late') {
+    baseScore *= 0.70; // late-stage extended = strong penalty
+    // BOS in premium (bull) or discount (bear) = additional downgrade
+    if (isBullBias && recentBOS_up && swingDistance > 0.75) baseScore *= 0.85;
+    if (isBearBias && recentBOS_down && swingDistance < 0.25) baseScore *= 0.85;
+  }
+  // mid = neutral, no change
+
   // ── STEP 7: STRICT BREAKOUT GATE ──
-  // Track whether this qualifies as a breakout
   const nearKeyLevel = nearLevels.length > 0;
   const hasStructureSetup = structEvents.length > 0 || nearFVG.length > 0;
   const noOpposingBOS = !(
@@ -2021,7 +2072,9 @@ function scoreSymbol(candles, derivs) {
   const breakoutStateOk = (marketState === 'RANGE' ||
     transitionType === 'bullish_reversal' ||
     transitionType === 'bearish_reversal');
-  const qualifiesAsBreakout = compressionScore > 45 && nearKeyLevel && noOpposingBOS && breakoutStateOk;
+  // Late entry disqualifies breakout classification
+  const qualifiesAsBreakout = compressionScore > 45 && nearKeyLevel && noOpposingBOS &&
+    breakoutStateOk && entryQuality !== 'late';
 
   // ── STEP 8: CONDITIONAL DERIVATIVES ──
   let derivImpact = 0;
@@ -2073,13 +2126,17 @@ function scoreSymbol(candles, derivs) {
   if (marketState === 'TREND' && trendScore > 50 && (
     (isBullBias && stTrend === 1) || (isBearBias && stTrend === -1)
   )) {
-    classification = 'TREND CONTINUATION';
-    classType = 'trend';
+    classification = entryQuality === 'late' ? 'LATE CONTINUATION' : 'TREND CONTINUATION';
+    classType = entryQuality === 'late' ? 'neutral' : 'trend';
   }
 
   // ── STEP 10: CONTEXTUAL TAGS ──
   const tags = [];
   tags.push({ label: isBullBias ? 'BULL BIAS' : isBearBias ? 'BEAR BIAS' : 'NEUTRAL', type: isBullBias ? 'bias-bull' : isBearBias ? 'bias-bear' : 'neutral' });
+  // Entry quality tag — prominent
+  if (entryQuality === 'early') tags.push({ label: hasFreshPullback ? 'EARLY + PULLBACK' : 'EARLY ENTRY', type: 'trend' });
+  else if (entryQuality === 'late') tags.push({ label: 'LATE / EXTENDED', type: 'squeeze' });
+  else tags.push({ label: 'MID RANGE', type: 'neutral' });
   if (compressionScore > 55) tags.push({ label:'HIGH COMPRESSION', type:'compression' });
   else if (compressionScore > 35) tags.push({ label:'COMPRESSING', type:'compression' });
   if (nearFVG.length > 0) tags.push({ label:`${nearFVG.length} FVG`, type:'liquidity' });
@@ -2094,46 +2151,51 @@ function scoreSymbol(candles, derivs) {
   if (tqi > 0.65) tags.push({ label:'HIGH TQI', type:'trend' });
   if (er > 0.5)   tags.push({ label:'HIGH ER', type:'trend' });
 
-  // ── STEP 11: CONTEXTUAL EXPLANATION ──
-  const zoneTxt = (() => {
-    if (highs.length > 0 && lows.length > 0) {
-      const sh = highs[highs.length-1].price;
-      const sl = lows[lows.length-1].price;
-      const pct = (currentPrice - sl) / ((sh - sl) || 1);
-      if (pct < 0.25) return 'discount zone';
-      if (pct > 0.75) return 'premium zone';
-      return 'equilibrium';
+  // ── STEP 11: CONTEXTUAL EXPLANATION WITH ENTRY QUALITY ──
+  const distPct = Math.round(swingDistance * 100);
+  const zoneTxt = entryQuality === 'early'
+    ? (isBullBias ? 'discount zone' : 'premium zone')
+    : entryQuality === 'late'
+    ? (isBullBias ? 'premium zone' : 'discount zone')
+    : 'equilibrium';
+
+  const entryCtx = (() => {
+    if (entryQuality === 'early') {
+      return hasFreshPullback
+        ? `Price is at ${distPct}% of swing — early-stage entry in ${zoneTxt} with active pullback. High reward-to-risk positioning.`
+        : `Price is at ${distPct}% of swing — early-stage entry in ${zoneTxt}. Favourable risk-reward positioning.`;
     }
-    return 'mid-range';
+    if (entryQuality === 'late') {
+      return `Price is at ${distPct}% of swing — already extended into ${zoneTxt}. Late-stage entry with weak risk-reward. Wait for pullback before acting.`;
+    }
+    return `Price at ${distPct}% of swing range — mid-range entry, neutral risk-reward.`;
   })();
 
-  // Context-aware narrative
-  let explanation = '';
   const prevStructTxt = structEvents.length > 0
-    ? structEvents[0].label + ' detected at ' + fmtPrice(structEvents[0].level)
+    ? structEvents[0].label + ' at ' + fmtPrice(structEvents[0].level)
     : 'no fresh structure break';
 
+  let explanation = '';
   if (bias === 'bearish') {
-    const comprCtx = compressionScore > 40
-      ? 'Compression after bearish BOS signals continuation, not reversal.'
-      : 'Structure favours downside continuation.';
-    explanation = `Bearish BOS confirmed. Price in ${zoneTxt}. ${comprCtx} ${prevStructTxt}. Downside liquidity prioritised.`;
+    const lateWarn = entryQuality === 'late'
+      ? ' However price is already extended to downside — poor RR for new shorts.'
+      : '';
+    explanation = `Bearish BOS confirmed. ${entryCtx}${lateWarn} ${prevStructTxt}. Downside liquidity prioritised.`;
   } else if (bias === 'bullish') {
-    const comprCtx = compressionScore > 40
-      ? 'Compression in uptrend — potential bullish continuation setup.'
-      : 'Structure supports further upside.';
-    explanation = `Bullish BOS confirmed. Price in ${zoneTxt}. ${comprCtx} ${prevStructTxt}.`;
+    if (entryQuality === 'late' && recentBOS_up) {
+      explanation = `Bullish BOS confirmed but price already in premium zone at ${distPct}% of swing. Late-stage continuation — weak risk-reward unless pullback to discount occurs. ${prevStructTxt}.`;
+    } else {
+      explanation = `Bullish BOS confirmed. ${entryCtx} ${prevStructTxt}.${compressionScore > 40 ? ' Compression suggests continuation setup.' : ''}`;
+    }
   } else if (bias === 'bullish_transition') {
-    explanation = `CHoCH to upside — potential reversal in play. Price in ${zoneTxt}. Prior bearish structure may flip. ${prevStructTxt}. Watch for higher high confirmation.`;
+    explanation = `CHoCH to upside — reversal in play. ${entryCtx} Prior bearish structure may flip. ${prevStructTxt}. Wait for higher high confirmation.`;
   } else if (bias === 'bearish_transition') {
-    explanation = `CHoCH to downside — reversal risk. Price in ${zoneTxt}. Prior bullish structure challenged. ${prevStructTxt}. Lower low confirmation needed.`;
+    explanation = `CHoCH to downside — reversal risk. ${entryCtx} Prior bullish structure challenged. ${prevStructTxt}. Lower low confirmation needed.`;
   } else {
     const comprCtx = compressionScore > 55
-      ? 'Strong ATR contraction — energy building for a directional move.'
-      : compressionScore > 35
-      ? 'Moderate compression detected in ranging market.'
-      : 'No clear structural edge.';
-    explanation = `Neutral bias — ${marketState} market. Price in ${zoneTxt}. ${comprCtx} ${prevStructTxt}.`;
+      ? 'Strong ATR contraction — directional move imminent.'
+      : compressionScore > 35 ? 'Moderate compression.' : 'No clear edge.';
+    explanation = `Neutral bias — ${marketState} market. ${entryCtx} ${comprCtx} ${prevStructTxt}.`;
   }
 
   const fundTxt = Math.abs(derivs.funding) < 0.01 ? '' :
@@ -2144,6 +2206,7 @@ function scoreSymbol(candles, derivs) {
   return {
     score: finalScore, marketState, transitionType,
     classification, classType, bias,
+    entryQuality, swingDistance,
     tags: tags.slice(0, 6), explanation,
     er, tqi, compressionScore, structScore, liquidityScore, trendScore,
     funding: derivs.funding, lsRatio: derivs.lsRatio, stTrend,
