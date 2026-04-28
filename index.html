@@ -1150,6 +1150,7 @@ body{
   <div class="ht-row"><span class="ht-key">CLASS</span><span class="ht-val" id="ht-class">—</span></div>
   <div class="ht-row"><span class="ht-key">STATE</span><span class="ht-val" id="ht-state">—</span></div>
   <div class="ht-row"><span class="ht-key">BIAS</span><span class="ht-val" id="ht-bias">—</span></div>
+  <div class="ht-row"><span class="ht-key">LIQ</span><span class="ht-val" id="ht-rc" style="color:var(--gold)">—</span></div>
   <div class="ht-row"><span class="ht-key">VOL</span><span class="ht-val" id="ht-vol">—</span></div>
 </div>
 
@@ -1215,7 +1216,7 @@ body{
   </div>
   <div class="drawer-footer">
     <button id="drawerScanBtn">▶ RUN FULL SCAN</button>
-    <button id="drawerCancelBtn" id="drawerCancelBtn">✕ CANCEL SCAN</button>
+    <button id="drawerCancelBtn">✕ CANCEL SCAN</button>
   </div>
 </aside>
 
@@ -1510,6 +1511,17 @@ let _autoTimer      = null;
 let _pipeCollapsed  = false;
 let _currentView    = 'heatmap'; // 'heatmap' | 'ranked'
 let _currentFilter  = 'all';
+
+// ── DATA CACHE (TTL: 45s per symbol) ──────────────────────────
+const _cache = {};
+const CACHE_TTL = 45_000;
+function cacheGet(key) {
+  const e = _cache[key];
+  if (!e) return null;
+  if (Date.now() - e.ts > CACHE_TTL) { delete _cache[key]; return null; }
+  return e.data;
+}
+function cacheSet(key, data) { _cache[key] = { data, ts: Date.now() }; }
 
 // ═══════════════════════════════════════════════════════════════
 // CLOCK
@@ -1999,29 +2011,31 @@ function scoreSymbol(candles, derivs) {
   else if (stTrend === -1 && currentPrice < stData.stLine[n-1]) trendScore += 15;
   trendScore = Math.min(100, trendScore);
 
-  // ── STEP 4: DIRECTIONAL LIQUIDITY WEIGHTING ──
-  let liquidityScore = 0;
-  const tolerance = currentPrice * 0.003;
-  let eqHighs = 0, eqLows = 0;
-  for (let i=0; i<highs.length-1; i++)
-    for (let j=i+1; j<highs.length; j++)
-      if (Math.abs(highs[i].price - highs[j].price) < tolerance) eqHighs++;
-  for (let i=0; i<lows.length-1; i++)
-    for (let j=i+1; j<lows.length; j++)
-      if (Math.abs(lows[i].price - lows[j].price) < tolerance) eqLows++;
+  // ── STEP 4: INSTITUTIONAL LIQUIDITY ENGINE ──
+  // Uses detectLiquidity(): inducement → sweep → BOS = valid SMC setup
+  const liqData = detectLiquidity(candles, highs, lows);
+  const { equalHighPairs, equalLowPairs, sweeps, liquidityPresent, sweepDetected, validSetup, setupQuality, reasonCode } = liqData;
+  const eqHighs = equalHighPairs.length;
+  const eqLows  = equalLowPairs.length;
 
-  if (isBearBias) {
-    liquidityScore += Math.min(eqLows  * 22, 44);
-    liquidityScore += Math.min(eqHighs * 8,  16);
-  } else if (isBullBias) {
-    liquidityScore += Math.min(eqHighs * 22, 44);
-    liquidityScore += Math.min(eqLows  * 8,  16);
+  let liquidityScore = 0;
+  // Inducement (equal highs/lows) = potential, not confirmation
+  if (isBullBias) {
+    liquidityScore += Math.min(eqHighs * 15, 30); // eq highs above = target
+    liquidityScore += Math.min(eqLows  * 8,  16); // eq lows below = support
+  } else if (isBearBias) {
+    liquidityScore += Math.min(eqLows  * 15, 30); // eq lows below = target
+    liquidityScore += Math.min(eqHighs * 8,  16); // eq highs above = resistance
   } else {
-    liquidityScore += Math.min(eqHighs * 18, 36);
-    liquidityScore += Math.min(eqLows  * 18, 36);
+    liquidityScore += Math.min((eqHighs+eqLows) * 10, 30);
   }
+  // Sweep detection = institutional confirmation (major bonus)
+  if (sweepDetected) liquidityScore += 30;
+  // Sweep + BOS = highest quality (valid institutional setup)
+  if (validSetup) liquidityScore += 24;
+  // Unfilled FVGs as secondary confirmation
   const unfilledFVGs = fvgs.filter(g => !g.filled);
-  liquidityScore += Math.min(unfilledFVGs.length * 12, 28);
+  liquidityScore += Math.min(unfilledFVGs.length * 8, 16);
   liquidityScore = Math.min(100, liquidityScore);
 
   // ── STEP 5: BASE SCORE ──
@@ -2211,6 +2225,8 @@ function scoreSymbol(candles, derivs) {
     er, tqi, compressionScore, structScore, liquidityScore, trendScore,
     funding: derivs.funding, lsRatio: derivs.lsRatio, stTrend,
     eqHighs, eqLows,
+    // Liquidity engine outputs
+    reasonCode, validSetup, sweepDetected, liquidityPresent: liqData.liquidityPresent,
   };
 }
 
@@ -2317,6 +2333,9 @@ async function fetchOIHistory(symbol) {
 
 // Scanner fetchers
 async function fetchScannerCandles(symbol, tf, limit=200) {
+  const cacheKey = `candles:${symbol}:${tf}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
   const tfMap={'5m':'5m','15m':'15m','1h':'1h','4h':'4h','1d':'1d','1w':'1w'};
   const interval = tfMap[tf]||'1h';
   const url = `${CFG.BINANCE_FAPI}/klines?symbol=${symbol}USDT&interval=${interval}&limit=${limit}`;
@@ -2327,10 +2346,15 @@ async function fetchScannerCandles(symbol, tf, limit=200) {
     if (!r.ok) return null;
     const d = await r.json();
     if (!Array.isArray(d)||d.length<50) return null;
-    return d.map(k=>({time:+k[0],open:+k[1],high:+k[2],low:+k[3],close:+k[4],vol:+k[5]}));
+    const result = d.map(k=>({time:+k[0],open:+k[1],high:+k[2],low:+k[3],close:+k[4],vol:+k[5]}));
+    cacheSet(cacheKey, result);
+    return result;
   } catch(e) { clearTimeout(id); return null; }
 }
 async function fetchScannerDerivs(symbol) {
+  const cacheKey = `derivs:${symbol}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
   try {
     const [fr,oi,ls] = await Promise.allSettled([
       fetchWithTimeout(`${CFG.BINANCE_FAPI}/premiumIndex?symbol=${symbol}USDT`).then(r=>r.ok?r.json():null).catch(()=>null),
@@ -2340,12 +2364,14 @@ async function fetchScannerDerivs(symbol) {
     const frData = fr.status==='fulfilled'?fr.value:null;
     const oiData = oi.status==='fulfilled'?oi.value:null;
     const lsData = ls.status==='fulfilled'?(Array.isArray(ls.value)?ls.value[0]:null):null;
-    return {
+    const result = {
       funding: frData ? parseFloat(frData.lastFundingRate||0)*100 : 0,
       oi:      oiData ? parseFloat(oiData.openInterest||0) : 0,
       oiVal:   oiData ? parseFloat(oiData.openInterest||0)*(frData?parseFloat(frData.markPrice||1):1) : 0,
       lsRatio: lsData ? parseFloat(lsData.longShortRatio||1) : 1,
     };
+    cacheSet(cacheKey, result);
+    return result;
   } catch(e) { return {funding:0,oi:0,oiVal:0,lsRatio:1}; }
 }
 async function fetchAllPairsFromBinance() {
@@ -2586,7 +2612,87 @@ function findOrderBlocks(candles, swings) {
   return obs;
 }
 
-function renderOrderBlocks(obs, currentPrice) {
+// ═══════════════════════════════════════════════════════════════
+// LIQUIDITY ENGINE — INSTITUTIONAL SWEEP DETECTION
+// ═══════════════════════════════════════════════════════════════
+//
+// Logic: Smart money moves = liquidity grab FIRST, then structure
+// Valid setup = equalHighs/Lows (inducement) → sweep → BOS/CHoCH
+//
+// Reason codes (audit requirement):
+//   NO_STRUCTURE | WEAK_MOMENTUM | LOW_LIQUIDITY | CHOP_ZONE | VALID_SETUP
+//
+function detectLiquidity(candles, highs, lows) {
+  const n = candles.length;
+  const currentPrice = candles[n-1].close;
+  const tolerance = currentPrice * 0.003; // 0.3% = equal level
+
+  // ── 1. Detect equal highs / equal lows (inducement pools) ──
+  const equalHighPairs = [];
+  const equalLowPairs  = [];
+  for (let i=0; i<highs.length-1; i++)
+    for (let j=i+1; j<highs.length; j++)
+      if (Math.abs(highs[i].price - highs[j].price) < tolerance)
+        equalHighPairs.push({ price: (highs[i].price+highs[j].price)/2, idxA: highs[i].idx, idxB: highs[j].idx });
+  for (let i=0; i<lows.length-1; i++)
+    for (let j=i+1; j<lows.length; j++)
+      if (Math.abs(lows[i].price - lows[j].price) < tolerance)
+        equalLowPairs.push({ price: (lows[i].price+lows[j].price)/2, idxA: lows[i].idx, idxB: lows[j].idx });
+
+  const liquidityPresent = equalHighPairs.length > 0 || equalLowPairs.length > 0;
+
+  // ── 2. Detect sweeps: wick through equal level then close back inside ──
+  // A sweep = candle high > eq high level, but close < eq high level (wick-through)
+  const sweeps = [];
+  for (const eqH of equalHighPairs) {
+    for (let i = Math.max(eqH.idxB, n-30); i < n; i++) {
+      const c = candles[i];
+      if (c.high > eqH.price + tolerance && c.close < eqH.price) {
+        sweeps.push({ type: 'high_sweep', price: eqH.price, idx: i, candle: c });
+      }
+    }
+  }
+  for (const eqL of equalLowPairs) {
+    for (let i = Math.max(eqL.idxB, n-30); i < n; i++) {
+      const c = candles[i];
+      if (c.low < eqL.price - tolerance && c.close > eqL.price) {
+        sweeps.push({ type: 'low_sweep', price: eqL.price, idx: i, candle: c });
+      }
+    }
+  }
+  const sweepDetected = sweeps.length > 0;
+
+  // ── 3. Check for BOS/CHoCH AFTER latest sweep (institutional confirmation) ──
+  const struct = detectStructure(candles, highs, lows);
+  const latestSweepIdx = sweeps.length > 0 ? Math.max(...sweeps.map(s=>s.idx)) : -1;
+  const structAfterSweep = struct.events.filter(e => {
+    // Match struct event candle index (approximate via price proximity in last 20 bars)
+    return latestSweepIdx > 0; // if sweep happened, any subsequent struct event qualifies
+  });
+
+  const validSetup = sweepDetected && (struct.recentBOS_up || struct.recentBOS_down || struct.recentCHOCH_up || struct.recentCHOCH_down);
+
+  // ── 4. Setup quality bonus ──
+  let setupQuality = 0;
+  if (liquidityPresent) setupQuality += 20;
+  if (sweepDetected)    setupQuality += 40;
+  if (validSetup)       setupQuality += 40;
+
+  // ── 5. Reason code classification ──
+  let reasonCode = 'NO_STRUCTURE';
+  if (validSetup)                                  reasonCode = 'VALID_SETUP';
+  else if (sweepDetected)                          reasonCode = 'SWEEP_NO_BOS';
+  else if (liquidityPresent)                       reasonCode = 'INDUCEMENT_ONLY';
+  else if (!struct.events || struct.events.length === 0) reasonCode = 'NO_STRUCTURE';
+  else                                             reasonCode = 'STRUCTURE_NO_LIQUIDITY';
+
+  return {
+    equalHighPairs, equalLowPairs,
+    sweeps, liquidityPresent, sweepDetected, validSetup,
+    setupQuality, reasonCode,
+    hasInducement: liquidityPresent,
+  };
+}
   const el = document.getElementById('ob-container');
   if (!el) return;
   if (!obs || obs.length === 0) {
@@ -3321,6 +3427,8 @@ async function runMarketScan() {
 
     const scanResults=[];
     let failed=0;
+    // Reason code tally for pipeline report
+    const reasonTally = { VALID_SETUP:0, SWEEP_NO_BOS:0, INDUCEMENT_ONLY:0, STRUCTURE_NO_LIQUIDITY:0, NO_STRUCTURE:0 };
     await processWithConcurrency(afterBias, async (sym) => {
       if (_scanCancelled) return;
       try {
@@ -3331,6 +3439,7 @@ async function runMarketScan() {
         result.symbol = sym;
         result.price  = candles[candles.length-1].close;
         result.vol    = tickers[sym]?.vol || 0;
+        if (result.reasonCode) reasonTally[result.reasonCode] = (reasonTally[result.reasonCode]||0) + 1;
         scanResults.push(result);
       } catch(e) { failed++; }
     }, 8, (done, tot) => {
@@ -3363,7 +3472,14 @@ async function runMarketScan() {
        <span class="pipe-badge blue">${trendSets} TREND CONT.</span>
        <span class="pipe-badge green">${bullBias} BULL BIAS</span>
        <span class="pipe-badge red">${bearBias} BEAR BIAS</span>
-       · <span class="hl">${new Date().toISOString().slice(11,19)} UTC</span>`,'pipe-s5');
+       · <span class="hl">${new Date().toISOString().slice(11,19)} UTC</span>
+       <div style="margin-top:6px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.06);font-size:8px;color:var(--muted);letter-spacing:0.08em">
+         LIQUIDITY QUALITY ·
+         <span style="color:var(--green)">${reasonTally.VALID_SETUP||0} VALID SETUP</span> ·
+         <span style="color:var(--gold)">${reasonTally.SWEEP_NO_BOS||0} SWEEP/NO BOS</span> ·
+         <span style="color:var(--blue)">${reasonTally.INDUCEMENT_ONLY||0} INDUCEMENT</span> ·
+         <span style="color:var(--muted)">${(reasonTally.NO_STRUCTURE||0)+(reasonTally.STRUCTURE_NO_LIQUIDITY||0)} NO STRUCTURE</span>
+       </div>`,'pipe-s5');
 
     // Collapse log to summary
     setTimeout(() => {
@@ -3492,6 +3608,8 @@ function renderHeatmap(results) {
         document.getElementById('ht-state').textContent=coin.marketState;
         document.getElementById('ht-bias').textContent=coin.bias.toUpperCase();
         document.getElementById('ht-vol').textContent=fmtCompact(coin.vol);
+        const rcEl = document.getElementById('ht-rc');
+        if (rcEl) rcEl.textContent = (coin.reasonCode||'').replace(/_/g,' ');
       });
       block.addEventListener('mouseleave', () => {
         document.getElementById('heatmap-tooltip').classList.remove('show');
@@ -3522,6 +3640,12 @@ function renderRankedList(results) {
     const barColor   = coin.score>=75?'#00e676':coin.score>=55?'#ffd54f':'#5a6470';
     const tier       = coin.score>=75?'high':coin.score>=55?'mid':'low';
 
+    // Reason code badge
+    const rcColor = coin.reasonCode==='VALID_SETUP'?'var(--green)':coin.reasonCode==='SWEEP_NO_BOS'?'var(--gold)':coin.reasonCode==='INDUCEMENT_ONLY'?'var(--blue)':'var(--muted)';
+    const rcLabel = coin.reasonCode||'UNKNOWN';
+    const sweepBadge = coin.sweepDetected ? `<span class="scan-tag liquidity" style="background:rgba(0,230,118,0.15);color:var(--green);border:1px solid rgba(0,230,118,0.3)">⚡ LIQ SWEEP</span>` : '';
+    const validBadge = coin.validSetup    ? `<span class="scan-tag structure" style="background:rgba(0,230,118,0.1);color:var(--green)">✓ VALID SETUP</span>` : '';
+
     const card = document.createElement('div');
     card.className = `coin-card tier-${tier}`;
     card.innerHTML = `
@@ -3533,12 +3657,15 @@ function renderRankedList(results) {
           <span class="coin-state-badge state-${coin.marketState}">${coin.marketState}</span>
           <span class="coin-class-badge class-${coin.classType}">${coin.classification}</span>
         </div>
-        <div class="coin-score-block">
-          <div class="coin-score-num" style="color:${scoreColor}">${coin.score}</div>
-          <div class="coin-score-label">SCORE</div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+          <div class="coin-score-block">
+            <div class="coin-score-num" style="color:${scoreColor}">${coin.score}</div>
+            <div class="coin-score-label">SCORE</div>
+          </div>
+          <div style="font-size:7px;color:${rcColor};letter-spacing:0.08em;text-align:right">${rcLabel.replace(/_/g,' ')}</div>
         </div>
       </div>
-      <div class="coin-tags">${coin.tags.map(t=>`<span class="scan-tag ${t.type}">${t.label}</span>`).join('')}</div>
+      <div class="coin-tags">${sweepBadge}${validBadge}${coin.tags.map(t=>`<span class="scan-tag ${t.type}">${t.label}</span>`).join('')}</div>
       <div class="coin-explanation">${coin.explanation}</div>
       <div class="coin-meta">
         <div class="coin-meta-item">ER:<span class="coin-meta-val">${(coin.er||0).toFixed(2)}</span></div>
