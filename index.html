@@ -550,6 +550,7 @@
     <option value="1h" selected>1H</option>
     <option value="4h">4H</option>
     <option value="1d">1D</option>
+    <option value="1w">1W</option>
   </select>
   <span class="ibl">QUICK</span>
   <div class="tf-pills">
@@ -1109,84 +1110,94 @@ function buildSRLevels(candles, highs, lows, currentPrice) {
   })).sort((a,b) => Math.abs(a.dist) - Math.abs(b.dist));
 }
 
-// Trade idea generator
+// ═══════════════════════════════════════════════
+// SMC-WEIGHTED TRADE IDEA GENERATOR
+// ═══════════════════════════════════════════════
 function generateTradeIdeas(candles, stData, swings, srLevels, rsi, er, tqi, currentPrice, derivData) {
   const n = candles.length;
   const lastTrend = stData.trend[n-1] || 1;
-  const stLine = stData.stLine[n-1] || currentPrice;
-  const atr = (currentPrice * 0.015); // approx 1.5% ATR fallback
+  const atrs = calcATR(candles, 14);
+  const atr = atrs[atrs.length - 1] || currentPrice * 0.015;
 
   const { highs, lows } = swings;
-  const lastSH = highs.length > 0 ? highs[highs.length-1].price : currentPrice * 1.02;
-  const lastSL = lows.length > 0 ? lows[lows.length-1].price : currentPrice * 0.98;
+  const lastSH = highs.length > 0 ? highs[highs.length-1].price : currentPrice * 1.03;
+  const lastSL = lows.length  > 0 ? lows[lows.length-1].price  : currentPrice * 0.97;
+  const rng     = lastSH - lastSL || currentPrice * 0.05;
+  const premium  = lastSH - rng * 0.25;
+  const discount = lastSL + rng * 0.25;
+  const equil    = (lastSH + lastSL) / 2;
+  const inPremium  = currentPrice > premium;
+  const inDiscount = currentPrice < discount;
 
-  // Nearest S/R
   const nearR = srLevels.find(l => l.zone === 'resistance');
   const nearS = srLevels.find(l => l.zone === 'support');
   const rTarget = nearR ? nearR.price : currentPrice * 1.03;
   const sTarget = nearS ? nearS.price : currentPrice * 0.97;
 
-  const premium = lastSH - (lastSH - lastSL) * 0.25;
-  const discount = lastSL + (lastSH - lastSL) * 0.25;
-  const equil = (lastSH + lastSL) / 2;
-  const inPremium = currentPrice > premium;
-  const inDiscount = currentPrice < discount;
-
-  const fundingNeutral = !derivData.funding || Math.abs(derivData.funding) < 0.03;
   const lsRatio = derivData.lsRatio || 1;
+  const funding  = derivData.funding || 0;
 
-  // LONG scenario
-  let longConfidence = 3;
-  if (lastTrend === 1) longConfidence++;
-  if (rsi && rsi < 50) longConfidence++;
-  if (inDiscount) longConfidence++;
-  if (derivData.funding && derivData.funding < 0) longConfidence++;
-  if (lsRatio < 0.9) longConfidence++;
-  longConfidence = Math.min(longConfidence, 8);
+  // SMC-WEIGHTED BIAS: SMC 60%, Derivatives 20%, Momentum 20%
+  let bullSMC = 0, bearSMC = 0;
+  if (lastTrend === 1) bullSMC += 20; else bearSMC += 20;
+  if (inDiscount) bullSMC += 20; else if (inPremium) bearSMC += 20; else { bullSMC += 8; bearSMC += 8; }
+  const events = detectStructure(candles, highs, lows);
+  if (events.length > 0) { if (events[0].dir === 'bull') bullSMC += 20; else bearSMC += 20; }
+  if (rsi) { if (rsi < 40) bullSMC += 10; else if (rsi > 65) bearSMC += 10; else if (rsi < 52) bullSMC += 5; else bearSMC += 5; }
+  if (tqi > 0.5 && lastTrend === 1) bullSMC += 10; else if (tqi > 0.5 && lastTrend === -1) bearSMC += 10;
+  if (funding > 0.05) bearSMC += 10; else if (funding > 0.02) bearSMC += 5; else if (funding < -0.01) bullSMC += 10;
+  if (lsRatio > 1.3) bearSMC += 10; else if (lsRatio > 1.1) bearSMC += 5; else if (lsRatio < 0.8) bullSMC += 10; else if (lsRatio < 0.9) bullSMC += 5;
 
-  const longEntry = inDiscount ? currentPrice : discount;
-  const longSL = lastSL - atr;
-  const longTP1 = equil;
-  const longTP2 = inPremium ? lastSH + atr : rTarget;
-  const longRR = longTP2 > longEntry ? ((longTP2 - longEntry) / (longEntry - longSL)).toFixed(2) : '—';
+  const totalScore = bullSMC + bearSMC || 1;
+  const bullPct = Math.round(bullSMC / totalScore * 100);
+  const primaryDir = bullSMC >= bearSMC ? 'LONG' : 'SHORT';
+  const confPips = Math.min(8, Math.round(Math.max(bullPct, 100 - bullPct) / 12.5));
 
-  // SHORT scenario
-  let shortConfidence = 3;
-  if (lastTrend === -1) shortConfidence++;
-  if (rsi && rsi > 55) shortConfidence++;
-  if (inPremium) shortConfidence++;
-  if (derivData.funding && derivData.funding > 0.03) shortConfidence++;
-  if (lsRatio > 1.2) shortConfidence++;
-  shortConfidence = Math.min(shortConfidence, 8);
+  const longEntry = inDiscount ? currentPrice : Math.max(discount, currentPrice - atr * 0.5);
+  const longSL    = Math.min(lastSL - atr * 0.5, longEntry - atr);
+  const longTP1   = equil;
+  const longTP2   = rTarget > longTP1 ? rTarget : lastSH;
+  const longRisk  = longEntry - longSL;
+  const longRR    = longRisk > 0 ? ((longTP2 - longEntry) / longRisk).toFixed(2) : 'N/A';
 
-  const shortEntry = inPremium ? currentPrice : premium;
-  const shortSL = lastSH + atr;
-  const shortTP1 = equil;
-  const shortTP2 = inDiscount ? lastSL - atr : sTarget;
-  const shortRR = shortEntry > shortTP2 ? ((shortEntry - shortTP2) / (shortSL - shortEntry)).toFixed(2) : '—';
+  const shortEntry = inPremium ? currentPrice : Math.min(premium, currentPrice + atr * 0.5);
+  const shortSL    = Math.max(lastSH + atr * 0.5, shortEntry + atr);
+  const shortTP1   = equil;
+  const shortTP2   = sTarget < shortTP1 ? sTarget : lastSL;
+  const shortRisk  = shortSL - shortEntry;
+  const shortRR    = shortRisk > 0 ? ((shortEntry - shortTP2) / shortRisk).toFixed(2) : 'N/A';
 
-  // Narratives
-  const tqiLabel = tqi > 0.65 ? 'HIGH TQI — trending environment' : tqi > 0.35 ? 'MODERATE TQI — mixed regime' : 'LOW TQI — choppy/ranging';
-  const erLabel = er > 0.5 ? 'trending ER' : er > 0.25 ? 'mixed ER' : 'choppy ER';
-  const priceZone = inPremium ? 'premium zone' : inDiscount ? 'discount zone' : 'equilibrium area';
-  const fundLabel = derivData.funding ? (derivData.funding > 0.02 ? 'positive (longs paying — contrarian bearish signal)' : derivData.funding < -0.01 ? 'negative (shorts paying — contrarian bullish signal)' : 'neutral') : 'unavailable';
-  const lsLabel = lsRatio > 1.1 ? 'majority long (crowded — watch for squeeze down)' : lsRatio < 0.9 ? 'majority short (crowded — watch for squeeze up)' : 'balanced';
+  const tqiTxt  = tqi > 0.65 ? 'HIGH TQI — strong trend' : tqi > 0.35 ? 'MODERATE TQI — mixed' : 'LOW TQI — choppy';
+  const zoneTxt = inPremium ? 'PREMIUM zone' : inDiscount ? 'DISCOUNT zone' : 'EQUILIBRIUM area';
+  const structTxt = events.length > 0 ? events[0].label + ' at ' + fmtPrice(events[0].level) : 'no fresh structure break';
+  const fundTxt = Math.abs(funding) < 0.01 ? 'neutral funding' : funding > 0 ? 'funding +' + funding.toFixed(4) + '% (longs paying)' : 'funding ' + funding.toFixed(4) + '% (shorts paying)';
+  const lsTxt   = lsRatio > 1.2 ? 'L/S crowded long' : lsRatio < 0.85 ? 'L/S crowded short' : 'L/S balanced';
+  const counterTxt = primaryDir === 'LONG' ? 'SHORT' : 'LONG';
 
-  const longNarr = `Price is trading in the ${priceZone}, with SuperTrend ${lastTrend === 1 ? 'BULLISH' : 'BEARISH'}. ${tqiLabel}. RSI at ${rsi ? rsi.toFixed(1) : '—'} indicates ${rsi < 40 ? 'oversold conditions — bullish edge' : rsi < 55 ? 'room to run higher' : 'overbought — be selective on entries'}. ${erLabel.charAt(0).toUpperCase() + erLabel.slice(1)} suggests ${er > 0.4 ? 'follow-through likely on breakouts' : 'range-bound behavior likely — target mid-range'}. Funding is ${fundLabel}. L/S ratio: ${lsLabel}. LONG bias best near discount zone ${fmtPrice(discount)} with SL below last swing low.`;
+  const primaryLevels = primaryDir === 'LONG'
+    ? { entry: longEntry, sl: longSL, tp1: longTP1, tp2: longTP2, rr: longRR }
+    : { entry: shortEntry, sl: shortSL, tp1: shortTP1, tp2: shortTP2, rr: shortRR };
 
-  const shortNarr = `Price is trading in the ${priceZone}. SuperTrend is ${lastTrend === -1 ? 'BEARISH — aligned with short' : 'BULLISH — counter-trend short, needs extra confluence'}. ${tqiLabel}. RSI ${rsi ? rsi.toFixed(1) : '—'} ${rsi > 65 ? '— extended, favors distribution' : rsi > 50 ? '— watch for rejection from resistance' : '— low RSI shorts are lower probability without CHoCH confirmation'}. Funding ${fundLabel} — ${derivData.funding && derivData.funding > 0.02 ? 'longs overleveraged, supports short' : 'no strong derivative edge for short'}. SHORT valid at premium ${fmtPrice(premium)} — rejection confirmation preferred before entry.`;
+  const primaryNarr = primaryDir === 'LONG'
+    ? 'SMC score ' + bullPct + '% bullish. Price in ' + zoneTxt + ' — structure favors LONG. ' + structTxt + '. ' + tqiTxt + '. RSI ' + (rsi ? rsi.toFixed(1) : '—') + ' — ' + (rsi < 40 ? 'oversold, high-probability zone.' : rsi < 55 ? 'room to push higher.' : 'extended — wait for pullback.') + ' ' + fundTxt + '. ' + lsTxt + '. ENTRY near ' + fmtPrice(longEntry) + ', SL below swing low ' + fmtPrice(longSL) + '.'
+    : 'SMC score ' + (100-bullPct) + '% bearish. Price in ' + zoneTxt + ' — structure favors SHORT. ' + structTxt + '. ' + tqiTxt + '. RSI ' + (rsi ? rsi.toFixed(1) : '—') + ' — ' + (rsi > 65 ? 'extended, distribution likely.' : 'needs rejection confirmation at resistance.') + ' ' + fundTxt + '. ' + lsTxt + '. ENTRY near ' + fmtPrice(shortEntry) + ', SL above swing high ' + fmtPrice(shortSL) + '.';
 
-  return [
-    { dir: 'LONG', confidence: longConfidence, entry: longEntry, sl: longSL, tp1: longTP1, tp2: longTP2, rr: longRR, narrative: longNarr },
-    { dir: 'SHORT', confidence: shortConfidence, entry: shortEntry, sl: shortSL, tp1: shortTP1, tp2: shortTP2, rr: shortRR, narrative: shortNarr }
-  ];
+  const counterLevels = counterTxt === 'LONG'
+    ? { entry: longEntry, sl: longSL, tp1: longTP1, tp2: longTP2, rr: longRR }
+    : { entry: shortEntry, sl: shortSL, tp1: shortTP1, tp2: shortTP2, rr: shortRR };
+
+  const counterNarr = counterTxt === 'SHORT'
+    ? 'Counter-trend SHORT (only ' + (100-bullPct) + '% bearish score). Valid on ' + (inPremium ? 'rejection candle from premium zone' : 'CHoCH confirmation on lower TF') + '. Levels: entry ' + fmtPrice(shortEntry) + ', SL ' + fmtPrice(shortSL) + ', TP1 ' + fmtPrice(shortTP1) + ', TP2 ' + fmtPrice(shortTP2) + '.'
+    : 'Counter-trend LONG (only ' + bullPct + '% bullish score). Valid on ' + (inDiscount ? 'strong demand reaction at discount' : 'BOS confirmation on lower TF') + '. Levels: entry ' + fmtPrice(longEntry) + ', SL ' + fmtPrice(longSL) + ', TP1 ' + fmtPrice(longTP1) + ', TP2 ' + fmtPrice(longTP2) + '.';
+
+  return { primaryDir, confPips, bullPct, primaryLevels, primaryNarr, counterTxt, counterLevels, counterNarr, atr };
 }
 
 // ═══════════════════════════════════════════════
 // DATA FETCHERS
 // ═══════════════════════════════════════════════
 async function fetchBinanceCandles(symbol, tf, limit = 200) {
-  const tfMap = { '5m':'5m','15m':'15m','1h':'1h','4h':'4h','1d':'1d' };
+  const tfMap = { '5m':'5m','15m':'15m','1h':'1h','4h':'4h','1d':'1d','1w':'1w' };
   const interval = tfMap[tf] || '1h';
   // Try futures first
   let url = `${CFG.BINANCE_FAPI}/klines?symbol=${symbol}USDT&interval=${interval}&limit=${limit}`;
@@ -1194,18 +1205,18 @@ async function fetchBinanceCandles(symbol, tf, limit = 200) {
     const r = await fetchWithTimeout(url);
     if (r.ok) {
       const d = await r.json();
-      if (Array.isArray(d) && d.length > 0) {
-        return d.map(k => ({
-          time: k[0], open: +k[1], high: +k[2], low: +k[3], close: +k[4], vol: +k[5]
-        }));
+      if (Array.isArray(d) && d.length > 5) {
+        return d.map(k => ({ time:+k[0], open:+k[1], high:+k[2], low:+k[3], close:+k[4], vol:+k[5] }));
       }
     }
   } catch(e) {}
   // Fallback to spot
   url = `${CFG.BINANCE_SPOT}/klines?symbol=${symbol}USDT&interval=${interval}&limit=${limit}`;
   const r = await fetchWithTimeout(url);
+  if (!r.ok) throw new Error('Not found: ' + symbol);
   const d = await r.json();
-  return d.map(k => ({ time: k[0], open: +k[1], high: +k[2], low: +k[3], close: +k[4], vol: +k[5] }));
+  if (!Array.isArray(d) || d.length < 5) throw new Error('No data: ' + symbol);
+  return d.map(k => ({ time:+k[0], open:+k[1], high:+k[2], low:+k[3], close:+k[4], vol:+k[5] }));
 }
 
 async function fetchBinanceTicker(symbol) {
@@ -1270,8 +1281,34 @@ async function fetchGeckoCoin(symbol) {
     ATOM:'cosmos', LTC:'litecoin', BCH:'bitcoin-cash', NEAR:'near',
     APT:'aptos', ARB:'arbitrum', OP:'optimism', INJ:'injective-protocol',
     TIA:'celestia', SUI:'sui', SEI:'sei-network', PYTH:'pyth-network',
+    PEPE:'pepe', WIF:'dogwifcoin', BONK:'bonk', FLOKI:'floki',
+    TON:'the-open-network', NOT:'notcoin', TRX:'tron', FTM:'fantom',
+    HBAR:'hedera-hashgraph', ALGO:'algorand', VET:'vechain', ICP:'internet-computer',
+    SAND:'the-sandbox', MANA:'decentraland', AXS:'axie-infinity',
+    SHIB:'shiba-inu', CRO:'crypto-com-chain', FIL:'filecoin',
+    IMX:'immutable-x', BLUR:'blur', CAKE:'pancakeswap-token',
+    AAVE:'aave', MKR:'maker', COMP:'compound-governance-token', SNX:'havven',
+    CRV:'curve-dao-token', BAL:'balancer', SUSHI:'sushi', YFI:'yearn-finance',
+    GRT:'the-graph', LDO:'lido-dao', RUNE:'thorchain', OSMO:'osmosis',
+    DYDX:'dydx', GMX:'gmx', PENDLE:'pendle', JTO:'jito-governance-token',
+    EIGEN:'eigenlayer', ENA:'ethena', W:'wormhole', ZRO:'layerzero',
   };
-  const id = coinMap[symbol.toUpperCase()];
+  let id = coinMap[symbol.toUpperCase()];
+
+  // If not in map, try CoinGecko search
+  if (!id) {
+    try {
+      const sr = await fetchWithTimeout(`${CFG.GECKO_API}/search?query=${symbol.toLowerCase()}`);
+      if (sr.ok) {
+        const sd = await sr.json();
+        const match = sd?.coins?.find(c =>
+          c.symbol.toUpperCase() === symbol.toUpperCase()
+        );
+        if (match) id = match.id;
+      }
+    } catch(e) {}
+  }
+
   if (!id) return null;
   try {
     const r = await fetchWithTimeout(`${CFG.GECKO_API}/coins/${id}?localization=false&tickers=false&community_data=false&developer_data=false&sparkline=false`);
@@ -1281,7 +1318,7 @@ async function fetchGeckoCoin(symbol) {
 
 // Multi-TF candles
 async function fetchMultiTF(symbol) {
-  const tfs = ['15m','1h','4h','1d'];
+  const tfs = ['15m','1h','4h','1d','1w'];
   const results = {};
   await Promise.allSettled(tfs.map(async tf => {
     try {
@@ -1349,7 +1386,7 @@ function renderChart(candles, stData, fvgs, swings, srLevels) {
   ctx.fillStyle = lastTrend === 1 ? 'rgba(0,230,118,0.025)' : 'rgba(255,61,61,0.025)';
   ctx.fillRect(pad.left, chartTop, W - pad.left - pad.right, CHART_H);
 
-  // ── Grid lines ──
+  // ── Grid lines + right-axis price labels ──
   ctx.font = '8px IBM Plex Mono';
   ctx.strokeStyle = 'rgba(42,42,31,0.55)';
   ctx.lineWidth = 0.5;
@@ -1360,80 +1397,67 @@ function renderChart(candles, stData, fvgs, swings, srLevels) {
     ctx.fillStyle = '#5a5035';
     ctx.fillText(fmtPrice(price), W - pad.right + 3, y + 3);
   }
-  // Vertical grid every 10 bars
+  // Vertical grid + time labels every 10 bars
   for (let i = 0; i < n; i += 10) {
     const x = cx(i);
-    ctx.strokeStyle = 'rgba(42,42,31,0.3)';
+    ctx.strokeStyle = 'rgba(42,42,31,0.25)';
     ctx.beginPath(); ctx.moveTo(x, chartTop); ctx.lineTo(x, chartTop + CHART_H); ctx.stroke();
-    // Time label
     if (display[i]) {
       const d = new Date(display[i].time);
-      const lbl = d.getUTCMonth()+1 + '/' + d.getUTCDate() + ' ' + String(d.getUTCHours()).padStart(2,'0') + ':' + String(d.getUTCMinutes()).padStart(2,'0');
+      const lbl = (d.getUTCMonth()+1) + '/' + d.getUTCDate() + ' ' + String(d.getUTCHours()).padStart(2,'0') + ':' + String(d.getUTCMinutes()).padStart(2,'0');
       ctx.fillStyle = '#3a3020';
       ctx.fillText(lbl, x - 10, chartTop + CHART_H + 10);
     }
   }
 
-  // ── FVG Boxes (draw behind candles) ──
+  // ── FVG Boxes (draw behind candles — zones only, no text) ──
   if (fvgs) {
     for (const g of fvgs.slice(-8)) {
       if (g.filled) continue;
       const top  = py(g.top, chartTop, CHART_H);
       const bot  = py(g.bottom, chartTop, CHART_H);
       const h    = Math.abs(bot - top);
-      ctx.fillStyle = g.type === 'bull' ? 'rgba(0,230,118,0.07)' : 'rgba(255,61,61,0.07)';
+      ctx.fillStyle = g.type === 'bull' ? 'rgba(0,230,118,0.08)' : 'rgba(255,61,61,0.08)';
       ctx.fillRect(pad.left, Math.min(top, bot), W - pad.left - pad.right, Math.max(h, 1));
-      ctx.strokeStyle = g.type === 'bull' ? 'rgba(0,230,118,0.25)' : 'rgba(255,61,61,0.25)';
+      ctx.strokeStyle = g.type === 'bull' ? 'rgba(0,230,118,0.22)' : 'rgba(255,61,61,0.22)';
       ctx.lineWidth = 0.5;
       ctx.setLineDash([2, 3]);
       ctx.strokeRect(pad.left, Math.min(top, bot), W - pad.left - pad.right, Math.max(h, 1));
       ctx.setLineDash([]);
-      ctx.fillStyle = g.type === 'bull' ? 'rgba(0,230,118,0.6)' : 'rgba(255,61,61,0.6)';
-      ctx.font = '8px IBM Plex Mono';
-      ctx.fillText(g.type === 'bull' ? 'BFVG' : 'SFVG', W - pad.right + 3, Math.min(top, bot) + 8);
     }
   }
 
-  // ── S/R Lines ──
+  // ── S/R Lines (subtle dashes, no text on chart) ──
   if (srLevels) {
-    for (const l of srLevels.slice(0, 8)) {
+    for (const l of srLevels.slice(0, 6)) {
       if (l.price < minP || l.price > maxP) continue;
       const y = py(l.price, chartTop, CHART_H);
-      ctx.strokeStyle = l.zone === 'resistance' ? 'rgba(255,61,61,0.4)' : 'rgba(0,230,118,0.4)';
-      ctx.lineWidth = 0.7;
-      ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = l.zone === 'resistance' ? 'rgba(255,61,61,0.28)' : 'rgba(0,230,118,0.28)';
+      ctx.lineWidth = 0.6;
+      ctx.setLineDash([4, 4]);
       ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = l.zone === 'resistance' ? 'rgba(255,61,61,0.7)' : 'rgba(0,230,118,0.7)';
-      ctx.font = '8px IBM Plex Mono';
-      ctx.fillText((l.zone === 'resistance' ? 'R' : 'S') + fmtPrice(l.price), W - pad.right + 3, y + 3);
     }
   }
 
-  // ── Premium / Discount / Equilibrium zones ──
+  // ── Premium / Discount / Equilibrium zones (subtle fill only, no text) ──
   if (swings) {
     const lastSH = swings.highs.length > 0 ? swings.highs[swings.highs.length-1].price : null;
     const lastSL = swings.lows.length  > 0 ? swings.lows[swings.lows.length-1].price  : null;
     if (lastSH && lastSL && lastSH > lastSL) {
-      const rng    = lastSH - lastSL;
-      const prem   = lastSH - rng * 0.25;
-      const disc   = lastSL + rng * 0.25;
-      const equil  = (lastSH + lastSL) / 2;
-      const eqPad  = rng * 0.03;
-      // Equilibrium band
+      const rng   = lastSH - lastSL;
+      const equil = (lastSH + lastSL) / 2;
+      const eqPad = rng * 0.03;
       if (equil + eqPad <= maxP && equil - eqPad >= minP) {
         const yHi = py(equil + eqPad, chartTop, CHART_H);
         const yLo = py(equil - eqPad, chartTop, CHART_H);
-        ctx.fillStyle = 'rgba(255,179,0,0.05)';
+        ctx.fillStyle = 'rgba(255,179,0,0.04)';
         ctx.fillRect(pad.left, yHi, W - pad.left - pad.right, yLo - yHi);
-        ctx.strokeStyle = 'rgba(255,179,0,0.2)';
+        ctx.strokeStyle = 'rgba(255,179,0,0.15)';
         ctx.lineWidth = 0.5;
         ctx.setLineDash([6, 4]);
         ctx.beginPath(); ctx.moveTo(pad.left, py(equil, chartTop, CHART_H)); ctx.lineTo(W - pad.right, py(equil, chartTop, CHART_H)); ctx.stroke();
         ctx.setLineDash([]);
-        ctx.fillStyle = 'rgba(255,213,79,0.5)';
-        ctx.font = '8px IBM Plex Mono';
-        ctx.fillText('EQ', W - pad.right + 3, py(equil, chartTop, CHART_H) + 3);
       }
     }
   }
@@ -1522,16 +1546,17 @@ function renderChart(candles, stData, fvgs, swings, srLevels) {
   // ── Volume bars ──
   const vols = display.map(c => c.vol);
   const maxVol = Math.max(...vols) || 1;
+  ctx.fillStyle = 'rgba(42,42,31,0.3)';
+  ctx.fillRect(pad.left, volTop, W - pad.left - pad.right, VOL_H);
   for (let i = 0; i < n; i++) {
     const c    = display[i];
     const bull = c.close >= c.open;
     const vH   = (c.vol / maxVol) * (VOL_H - 2);
-    ctx.fillStyle = bull ? 'rgba(0,230,118,0.35)' : 'rgba(255,61,61,0.35)';
+    ctx.fillStyle = bull ? 'rgba(0,230,118,0.32)' : 'rgba(255,61,61,0.32)';
     ctx.fillRect(cx(i), volTop + VOL_H - vH, barW, vH);
   }
-  // Vol label
   ctx.fillStyle = '#3a3020'; ctx.font = '8px IBM Plex Mono';
-  ctx.fillText('VOL', W - pad.right + 3, volTop + 9);
+  ctx.fillText('VOL', W - pad.right + 3, volTop + 8);
 
   // ── RSI sub-chart ──
   const rsiArr = calcRSI(allCandles.map(c => c.close), 14);
@@ -1620,24 +1645,28 @@ function updatePriceHeader(ticker, binanceTicker, stTrend, er, tqi, rsi) {
     rsiEl.className = 'price-stat-value ' + (rsi > 65 ? 'down' : rsi < 35 ? 'up' : '');
   }
 
-  // Overall bias
-  let bullScore = 0, bearScore = 0;
-  if (stTrend === 1) bullScore += 2; else bearScore += 2;
-  if (rsi && rsi < 50) bullScore++; else if (rsi && rsi > 50) bearScore++;
-  if (er > 0.4 && stTrend === 1) bullScore++; else if (er > 0.4 && stTrend === -1) bearScore++;
-  if (tqi > 0.6) { if (stTrend === 1) bullScore++; else bearScore++; }
+  // Overall bias — SMC weighted (mirrors generateTradeIdeas scoring)
+  // We reuse the same logic for consistency
+  let bullSMC = 0, bearSMC = 0;
+  if (stTrend === 1) bullSMC += 20; else bearSMC += 20;
+  if (rsi) { if (rsi < 40) bullSMC += 10; else if (rsi > 65) bearSMC += 10; else if (rsi < 52) bullSMC += 5; else bearSMC += 5; }
+  if (tqi > 0.5 && stTrend === 1) bullSMC += 10; else if (tqi > 0.5 && stTrend === -1) bearSMC += 10;
+  // er trend momentum
+  if (er > 0.4 && stTrend === 1) bullSMC += 10; else if (er > 0.4 && stTrend === -1) bearSMC += 10;
+  const totalBias = bullSMC + bearSMC || 1;
+  const bullBiasP = Math.round(bullSMC / totalBias * 100);
 
   const biasEl = document.getElementById('h-bias');
   const biasConf = document.getElementById('h-bias-conf');
-  if (bullScore > bearScore + 1) {
+  if (bullBiasP >= 62) {
     biasEl.textContent = 'BULLISH'; biasEl.className = 'bias-value bullish';
-    biasConf.textContent = 'SCORE ' + bullScore + '/' + (bullScore + bearScore);
-  } else if (bearScore > bullScore + 1) {
+    biasConf.textContent = bullBiasP + '% SMC BULL';
+  } else if (bullBiasP <= 38) {
     biasEl.textContent = 'BEARISH'; biasEl.className = 'bias-value bearish';
-    biasConf.textContent = 'SCORE ' + bearScore + '/' + (bullScore + bearScore);
+    biasConf.textContent = (100 - bullBiasP) + '% SMC BEAR';
   } else {
     biasEl.textContent = 'NEUTRAL'; biasEl.className = 'bias-value neutral';
-    biasConf.textContent = 'MIXED SIGNALS';
+    biasConf.textContent = 'MIXED — ' + bullBiasP + '/' + (100-bullBiasP);
   }
 }
 
@@ -1796,12 +1825,12 @@ function updateStructure(candles, stData, swings, fvgs, tf) {
 
 function updateMultiTF(multiTFCandles, currentTF) {
   const rows = [];
-  const tfs = ['15m','1h','4h','1d'];
-  const labels = { '15m':'15M', '1h':'1H', '4h':'4H', '1d':'1D' };
+  const tfs = ['15m','1h','4h','1d','1w'];
+  const labels = { '15m':'15M', '1h':'1H', '4h':'4H', '1d':'1D', '1w':'1W' };
 
   for (const tf of tfs) {
     const candles = multiTFCandles[tf];
-    if (!candles || candles.length < 30) {
+    if (!candles || candles.length < 20) {
       rows.push(`<tr><td>${labels[tf]}</td><td colspan="4"><span style="color:var(--text3)">NO DATA</span></td></tr>`);
       continue;
     }
@@ -1849,56 +1878,117 @@ function updateSRLevels(srLevels, currentPrice) {
   document.getElementById('sr-levels').innerHTML = html;
 }
 
-function updateTradeIdeas(ideas) {
-  const html = ideas.map(idea => {
-    const isLong = idea.dir === 'LONG';
-    const pips = Array.from({length:8}, (_,i) => `<div class="conf-pip${i < idea.confidence ? ' filled':''}"></div>`).join('');
+function updateTradeIdeas(data) {
+  const { primaryDir, confPips, bullPct, primaryLevels: pl, primaryNarr, counterTxt, counterLevels: cl, counterNarr } = data;
+  const isLong = primaryDir === 'LONG';
+  const bearPct = 100 - bullPct;
+  const pips = Array.from({length:8}, (_,i) => `<div class="conf-pip${i < confPips ? ' filled':''}"></div>`).join('');
 
-    return `
-    <div class="trade-card">
-      <div class="trade-card-header">
-        <span class="trade-dir ${isLong?'long':'short'}">${isLong?'▲':'▼'} ${idea.dir}</span>
-        <div class="trade-confidence">
-          <span>CONF</span>
-          <div class="conf-bar">${pips}</div>
-          <span>${idea.confidence}/8</span>
-        </div>
+  // Bias meter bar
+  const biasMeter = `
+    <div style="padding:8px 12px;border-bottom:1px solid var(--border);background:var(--bg3)">
+      <div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:4px">
+        <span style="color:var(--green)">BULL ${bullPct}%</span>
+        <span style="color:var(--text3);font-size:9px;letter-spacing:0.08em">SMC BIAS SCORE</span>
+        <span style="color:var(--red)">BEAR ${bearPct}%</span>
       </div>
-      <div class="trade-levels">
-        <div class="trade-level">
-          <div class="tl-label">ENTRY ZONE</div>
-          <div class="tl-value entry">${fmtPrice(idea.entry)}</div>
-        </div>
-        <div class="trade-level">
-          <div class="tl-label">STOP LOSS</div>
-          <div class="tl-value sl">${fmtPrice(idea.sl)}</div>
-        </div>
-        <div class="trade-level">
-          <div class="tl-label">TP 1</div>
-          <div class="tl-value tp">${fmtPrice(idea.tp1)}</div>
-        </div>
+      <div style="height:5px;background:var(--red-dim);position:relative">
+        <div style="height:100%;width:${bullPct}%;background:linear-gradient(90deg,var(--green),var(--amber));transition:width 0.5s"></div>
+        <div style="position:absolute;top:-2px;left:50%;transform:translateX(-50%);width:1px;height:9px;background:var(--text3)"></div>
       </div>
-      <div class="trade-levels">
-        <div class="trade-level" style="grid-column:1/-1">
-          <div class="tl-label">TP 2 (EXTENDED)</div>
-          <div class="tl-value tp">${fmtPrice(idea.tp2)}</div>
-        </div>
+      <div style="font-size:9px;color:var(--text3);margin-top:4px;text-align:center">
+        SMC 60% · DERIVATIVES 20% · MOMENTUM 20%
       </div>
-      <div class="trade-rr">
-        <div class="rr-item">R:R <span>${idea.rr}</span></div>
-        <div class="rr-item">RISK <span>${fmtPrice(Math.abs(idea.entry - idea.sl))}</span></div>
-        <div class="rr-item">REWARD <span>${fmtPrice(Math.abs(idea.tp2 - idea.entry))}</span></div>
-      </div>
-      <div class="trade-narrative">${idea.narrative}</div>
     </div>`;
-  }).join('');
 
-  document.getElementById('scenarios-wrap').innerHTML = `
-    <div class="scenario-title">SCENARIO ANALYSIS — UNBIASED BOTH DIRECTIONS</div>
-    ${html}
-    <div style="padding:10px 12px;font-size:9px;color:var(--text3);border-top:1px solid var(--border);line-height:1.6">
-      ⚠ NOT FINANCIAL ADVICE. ANALYSIS IS ALGORITHMICALLY GENERATED. ALWAYS APPLY YOUR OWN RISK MANAGEMENT. ATL SYSTEMS FOR EDUCATIONAL USE ONLY.
+  // Primary trade card
+  const primaryCard = `
+    <div style="padding:6px 12px;background:${isLong ? 'rgba(0,230,118,0.04)' : 'rgba(255,61,61,0.04)'};border-bottom:2px solid ${isLong ? 'var(--green)' : 'var(--red)'}">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:13px;font-weight:700;color:${isLong ? 'var(--green)' : 'var(--red)'};letter-spacing:0.08em">${isLong ? '▲' : '▼'} PRIMARY: ${primaryDir}</span>
+          <span style="font-size:9px;padding:2px 6px;background:${isLong ? 'var(--green-dim)' : 'var(--red-dim)'};color:${isLong ? 'var(--green)' : 'var(--red)'};letter-spacing:0.1em">HIGH CONVICTION</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;font-size:9px;color:var(--text3)">
+          <span>CONF</span><div style="display:flex;gap:1px">${pips}</div><span>${confPips}/8</span>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:6px">
+        <div class="trade-level"><div class="tl-label">ENTRY ZONE</div><div class="tl-value entry">${fmtPrice(pl.entry)}</div></div>
+        <div class="trade-level"><div class="tl-label">STOP LOSS</div><div class="tl-value sl">${fmtPrice(pl.sl)}</div></div>
+        <div class="trade-level"><div class="tl-label">TP 1</div><div class="tl-value tp">${fmtPrice(pl.tp1)}</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:6px">
+        <div class="trade-level"><div class="tl-label">TP 2 (EXTENDED)</div><div class="tl-value tp">${fmtPrice(pl.tp2)}</div></div>
+        <div class="trade-level">
+          <div class="tl-label">RISK · REWARD</div>
+          <div style="font-size:11px;font-weight:600;color:var(--amber2)">${pl.rr}R &nbsp;<span style="font-size:9px;color:var(--text3)">RISK ${fmtPrice(Math.abs(pl.entry - pl.sl))}</span></div>
+        </div>
+      </div>
+      <div style="font-size:9.5px;color:var(--text2);line-height:1.65;font-family:var(--font-sans);padding-top:6px;border-top:1px solid var(--border)">${primaryNarr}</div>
     </div>`;
+
+  // Counter-direction note (collapsed / compact)
+  const isCounterLong = counterTxt === 'LONG';
+  const counterCard = `
+    <div style="padding:8px 12px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
+        <span style="font-size:10px;font-weight:600;color:${isCounterLong ? 'rgba(0,230,118,0.55)' : 'rgba(255,61,61,0.55)'};letter-spacing:0.06em">${isCounterLong ? '▲' : '▼'} COUNTER: ${counterTxt}</span>
+        <span style="font-size:9px;padding:1px 5px;background:var(--bg4);color:var(--text3);letter-spacing:0.08em;border:1px solid var(--border2)">LOW CONVICTION</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:3px;margin-bottom:5px">
+        <div class="trade-level"><div class="tl-label">ENTRY</div><div class="tl-value" style="color:var(--text2);font-size:9px">${fmtPrice(cl.entry)}</div></div>
+        <div class="trade-level"><div class="tl-label">SL</div><div class="tl-value sl" style="font-size:9px">${fmtPrice(cl.sl)}</div></div>
+        <div class="trade-level"><div class="tl-label">TP1</div><div class="tl-value tp" style="font-size:9px">${fmtPrice(cl.tp1)}</div></div>
+        <div class="trade-level"><div class="tl-label">TP2</div><div class="tl-value tp" style="font-size:9px">${fmtPrice(cl.tp2)}</div></div>
+      </div>
+      <div style="font-size:9px;color:var(--text3);line-height:1.55;font-family:var(--font-sans)">${counterNarr}</div>
+    </div>`;
+
+  // ATR info row
+  const atrRow = `
+    <div style="padding:6px 12px;border-bottom:1px solid var(--border);display:flex;gap:16px;flex-wrap:wrap">
+      <div class="rr-item">ATR(14) <span>${fmtPrice(data.atr)}</span></div>
+      <div class="rr-item">1× ATR SL <span>${fmtPrice(data.atr)}</span></div>
+      <div class="rr-item">2× ATR SL <span>${fmtPrice(data.atr * 2)}</span></div>
+      <div class="rr-item">TICK RISK <span>${((data.atr / (isLong ? pl.entry : cl.entry)) * 100).toFixed(2)}%</span></div>
+    </div>`;
+
+  // SMC checklist — fills the blank space
+  const smcBull = bullPct >= 50;
+  const checks = [
+    { label: 'SuperTrend',      pass: smcBull ? (data.bullPct > 50) : (data.bullPct <= 50) },
+    { label: 'Price Zone',      pass: isLong ? (primaryNarr.includes('DISCOUNT')) : (primaryNarr.includes('PREMIUM')) },
+    { label: 'BOS/CHoCH',       pass: primaryNarr.includes('BOS') || primaryNarr.includes('CHoCH') },
+    { label: 'RSI Aligned',     pass: isLong ? (primaryNarr.includes('oversold') || primaryNarr.includes('room')) : (primaryNarr.includes('extended') || primaryNarr.includes('rejection')) },
+    { label: 'TQI > 0.5',       pass: primaryNarr.includes('HIGH TQI') || primaryNarr.includes('MODERATE') },
+    { label: 'Funding Edge',    pass: primaryNarr.includes('longs paying') ? !isLong : primaryNarr.includes('shorts paying') ? isLong : false },
+    { label: 'L/S Positioning', pass: primaryNarr.includes('crowded') },
+  ];
+  const checklistHtml = checks.map(c => `
+    <div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid rgba(42,42,31,0.3)">
+      <span style="font-size:10px;color:${c.pass ? 'var(--green)' : 'var(--text3)'}">${c.pass ? '✓' : '·'}</span>
+      <span style="font-size:9px;color:${c.pass ? 'var(--text)' : 'var(--text3)'}">${c.label}</span>
+      <span style="margin-left:auto;font-size:8px;color:${c.pass ? 'var(--green)' : 'var(--text3)'}">${c.pass ? 'ALIGNED' : 'NEUTRAL'}</span>
+    </div>`).join('');
+
+  const smcChecklist = `
+    <div style="padding:8px 12px;border-bottom:1px solid var(--border)">
+      <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);margin-bottom:6px">SMC CONFLUENCE CHECKLIST</div>
+      ${checklistHtml}
+      <div style="margin-top:6px;padding:5px 8px;background:var(--bg3);font-size:9px;color:var(--amber2)">
+        ${checks.filter(c=>c.pass).length}/${checks.length} FACTORS ALIGNED WITH ${primaryDir}
+      </div>
+    </div>`;
+
+  const disclaimer = `
+    <div style="padding:10px 12px;font-size:9px;color:var(--text3);border-top:1px solid var(--border);line-height:1.7;font-family:var(--font-sans)">
+      ⚠ NOT FINANCIAL ADVICE. ANALYSIS IS ALGORITHMICALLY GENERATED FROM PRICE ACTION AND ON-CHAIN DATA. ALWAYS APPLY YOUR OWN RISK MANAGEMENT AND POSITION SIZING. ATL SYSTEMS FOR EDUCATIONAL USE ONLY.
+    </div>`;
+
+  document.getElementById('trade-panel').querySelector('.panel-header .ph-label').textContent = 'TRADE SCENARIOS';
+  document.getElementById('trade-panel').querySelector('.panel-header .ph-sub').textContent = `PRIMARY: ${primaryDir} · ${bullPct}% BULL`;
+  document.getElementById('scenarios-wrap').innerHTML = biasMeter + primaryCard + counterCard + atrRow + smcChecklist + disclaimer;
 }
 
 // ═══════════════════════════════════════════════
@@ -1912,23 +2002,71 @@ async function runAnalysis() {
   showLoading(true);
   setStatus('FETCHING MARKET DATA...', 'loading');
 
+  // ── IMMEDIATELY reset ticker display so stale name never shows ──
+  document.getElementById('h-ticker').textContent = ticker + '/USDT';
+  document.getElementById('h-price').textContent = '—';
+  document.getElementById('h-change').textContent = '—';
+  document.getElementById('h-change').className = 'price-change';
+  document.getElementById('h-high').textContent = '—';
+  document.getElementById('h-low').textContent = '—';
+  document.getElementById('h-vol').textContent = '—';
+  document.getElementById('h-mcap').textContent = '—';
+  document.getElementById('h-st').textContent = '—';
+  document.getElementById('h-er').textContent = '—';
+  document.getElementById('h-tqi').textContent = '—';
+  document.getElementById('h-rsi').textContent = '—';
+  document.getElementById('h-bias').textContent = '—';
+  document.getElementById('h-bias').className = 'bias-value neutral';
+  document.getElementById('h-bias-conf').textContent = '—';
+
   try {
-    // 1. Fetch candles
+    // 1. Fetch candles — try USDT perp first, then spot, then BTC pair
     setLoadingSub(`LOADING ${ticker} ${tf.toUpperCase()} CANDLES FROM BINANCE...`);
-    let candles;
+    let candles = null;
+    let usedPair = ticker + 'USDT';
+
+    // Try futures USDT perp
     try {
       candles = await fetchBinanceCandles(ticker, tf, 300);
-    } catch(e) {
-      setStatus('CANDLE FETCH FAILED — TICKER NOT FOUND', 'error');
+      if (candles && candles.length > 0) usedPair = ticker + 'USDT (PERP)';
+    } catch(e) { candles = null; }
+
+    // Fallback: try spot USDT
+    if (!candles || candles.length < 20) {
+      try {
+        const r = await fetchWithTimeout(`${CFG.BINANCE_SPOT}/klines?symbol=${ticker}USDT&interval=${({'5m':'5m','15m':'15m','1h':'1h','4h':'4h','1d':'1d','1w':'1w'}[tf]||'1h')}&limit=300`);
+        if (r.ok) {
+          const d = await r.json();
+          if (Array.isArray(d) && d.length > 20) {
+            candles = d.map(k => ({ time:+k[0], open:+k[1], high:+k[2], low:+k[3], close:+k[4], vol:+k[5] }));
+            usedPair = ticker + 'USDT (SPOT)';
+          }
+        }
+      } catch(e) {}
+    }
+
+    // Fallback: try BTC pair
+    if (!candles || candles.length < 20) {
+      try {
+        const r = await fetchWithTimeout(`${CFG.BINANCE_SPOT}/klines?symbol=${ticker}BTC&interval=${({'5m':'5m','15m':'15m','1h':'1h','4h':'4h','1d':'1d','1w':'1w'}[tf]||'1h')}&limit=300`);
+        if (r.ok) {
+          const d = await r.json();
+          if (Array.isArray(d) && d.length > 20) {
+            candles = d.map(k => ({ time:+k[0], open:+k[1], high:+k[2], low:+k[3], close:+k[4], vol:+k[5] }));
+            usedPair = ticker + 'BTC (SPOT)';
+          }
+        }
+      } catch(e) {}
+    }
+
+    if (!candles || candles.length < 20) {
+      setStatus(`❌ TICKER "${ticker}" NOT FOUND — CHECK SYMBOL AND TRY AGAIN`, 'error');
       showLoading(false);
+      document.getElementById('h-ticker').textContent = ticker + ' — NOT FOUND';
       return;
     }
 
-    if (!candles || candles.length < 30) {
-      setStatus('INSUFFICIENT CANDLE DATA — TRY A DIFFERENT TICKER OR TF', 'error');
-      showLoading(false);
-      return;
-    }
+    document.getElementById('deriv-src').textContent = usedPair;
 
     // 2. Derivatives
     setLoadingSub('FETCHING DERIVATIVES FROM BINANCE FUTURES...');
