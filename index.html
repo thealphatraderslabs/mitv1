@@ -603,19 +603,129 @@
     color: var(--text2);
     letter-spacing: 0.08em;
   }
+  #scanProgressWrap {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+  }
   #scanProgressBar {
-    width: 180px;
+    width: 260px;
     height: 3px;
     background: var(--border2);
     position: relative;
     overflow: hidden;
+    flex-shrink: 0;
   }
   #scanProgressFill {
     height: 100%;
     background: var(--amber);
     width: 0%;
-    transition: width 0.3s;
+    transition: width 0.2s;
   }
+  #scanProgress {
+    font-size: 10px;
+    color: var(--text2);
+    letter-spacing: 0.08em;
+    font-family: var(--font-mono);
+  }
+
+  /* ── Pipeline Log ── */
+  #scan-pipeline {
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }
+  .pipe-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    border-bottom: 1px solid rgba(42,42,31,0.4);
+    padding: 0;
+    animation: stepIn 0.2s ease;
+  }
+  @keyframes stepIn { from { opacity:0; transform: translateX(-6px); } to { opacity:1; transform: none; } }
+  .pipe-step:last-child { border-bottom: none; }
+  .pipe-step-num {
+    width: 32px;
+    min-width: 32px;
+    padding: 9px 0 9px 14px;
+    font-size: 9px;
+    color: var(--text3);
+    letter-spacing: 0.1em;
+  }
+  .pipe-step-icon {
+    width: 28px;
+    min-width: 28px;
+    padding: 9px 0;
+    text-align: center;
+    font-size: 11px;
+  }
+  .pipe-step-body {
+    flex: 1;
+    padding: 8px 14px 8px 4px;
+    line-height: 1.6;
+  }
+  .pipe-step-title {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin-bottom: 2px;
+  }
+  .pipe-step-title.ok { color: var(--green); }
+  .pipe-step-title.err { color: var(--red); }
+  .pipe-step-title.warn { color: var(--amber2); }
+  .pipe-step-title.info { color: var(--blue); }
+  .pipe-step-detail {
+    font-size: 9px;
+    color: var(--text2);
+    line-height: 1.7;
+  }
+  .pipe-step-detail .hl { color: var(--white); font-weight: 500; }
+  .pipe-step-detail .red { color: var(--red); }
+  .pipe-step-detail .green { color: var(--green); }
+  .pipe-step-detail .amber { color: var(--amber2); }
+  .pipe-step-detail .blue { color: var(--blue); }
+  .pipe-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    font-size: 8px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin: 0 2px;
+  }
+  .pipe-badge.green { background: var(--green-dim); color: var(--green); }
+  .pipe-badge.red   { background: var(--red-dim); color: var(--red); }
+  .pipe-badge.amber { background: var(--amber-dim); color: var(--amber2); }
+  .pipe-badge.blue  { background: var(--blue-dim); color: var(--blue); }
+  .pipe-badge.gray  { background: var(--bg4); color: var(--text2); }
+  .pipe-spinner {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border: 1px solid var(--border2);
+    border-top-color: var(--amber);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+    margin-right: 5px;
+  }
+  .pipe-filter-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 9px;
+    color: var(--text2);
+  }
+  .pipe-filter-arrow { color: var(--text3); font-size: 8px; }
+  .pipe-filter-count { color: var(--amber2); font-weight: 500; min-width: 28px; text-align: right; }
+  .pipe-filter-reason { color: var(--text3); }
 
   /* Scanner results area */
   #scanner-results {
@@ -1167,7 +1277,16 @@
       </select>
       <button id="scanBtn">◈ SCAN MARKET</button>
       <button id="cancelScanBtn">✕ CANCEL</button>
-      <div id="scanProgressBar" style="display:none"><div id="scanProgressFill"></div></div>
+    </div>
+
+    <!-- Pipeline Log Panel -->
+    <div id="scan-pipeline" style="display:none">
+      <!-- Step rows injected here by JS -->
+    </div>
+
+    <!-- Scan Progress Bar (shown during coin scan phase) -->
+    <div id="scanProgressWrap" style="display:none">
+      <div id="scanProgressBar"><div id="scanProgressFill"></div></div>
       <span id="scanProgress"></span>
     </div>
 
@@ -2713,28 +2832,82 @@ let _scanCancelled = false;
 let _scanResults = [];
 
 // ── Step 1: Fetch all USDT perp pairs from Binance Futures ──
-async function fetchAllPairs() {
+// ── Pipeline log helpers ──
+function pipelineShow() {
+  const el = document.getElementById('scan-pipeline');
+  el.innerHTML = '';
+  el.style.display = 'block';
+}
+function pipeAddStep(num, icon, titleText, titleClass, detailHtml, id) {
+  const el = document.getElementById('scan-pipeline');
+  const div = document.createElement('div');
+  div.className = 'pipe-step';
+  if (id) div.id = id;
+  div.innerHTML = `
+    <div class="pipe-step-num">S${num}</div>
+    <div class="pipe-step-icon">${icon}</div>
+    <div class="pipe-step-body">
+      <div class="pipe-step-title ${titleClass}">${titleText}</div>
+      <div class="pipe-step-detail">${detailHtml}</div>
+    </div>`;
+  el.appendChild(div);
+  return div;
+}
+function pipeUpdateStep(id, titleText, titleClass, detailHtml) {
+  const div = document.getElementById(id);
+  if (!div) return;
+  div.querySelector('.pipe-step-title').textContent = titleText;
+  div.querySelector('.pipe-step-title').className = 'pipe-step-title ' + titleClass;
+  div.querySelector('.pipe-step-detail').innerHTML = detailHtml;
+}
+
+// ── Binance pair fetch ──
+async function fetchAllPairsFromBinance() {
   const r = await fetchWithTimeout(`${CFG.BINANCE_FAPI}/exchangeInfo`);
-  if (!r.ok) throw new Error('Failed to fetch exchange info');
+  if (!r.ok) throw new Error('HTTP ' + r.status);
   const d = await r.json();
   return d.symbols
     .filter(s => s.quoteAsset === 'USDT' && s.contractType === 'PERPETUAL' && s.status === 'TRADING')
     .map(s => s.baseAsset);
 }
 
-// ── Fetch 24h ticker for volume filter ──
-async function fetchAllTickers() {
-  try {
-    const r = await fetchWithTimeout(`${CFG.BINANCE_FAPI}/ticker/24hr`);
-    if (!r.ok) return {};
-    const data = await r.json();
-    const map = {};
-    for (const t of data) {
-      const sym = t.symbol.replace('USDT','');
-      map[sym] = { vol: parseFloat(t.quoteVolume || 0), price: parseFloat(t.lastPrice || 0) };
-    }
-    return map;
-  } catch(e) { return {}; }
+// ── Bybit pair fetch (fallback) ──
+async function fetchAllPairsFromBybit() {
+  const r = await fetchWithTimeout(`${CFG.BYBIT_API}/instruments-info?category=linear&limit=1000`);
+  if (!r.ok) throw new Error('Bybit HTTP ' + r.status);
+  const d = await r.json();
+  const symbols = (d?.result?.list || [])
+    .filter(s => s.quoteCoin === 'USDT' && s.status === 'Trading')
+    .map(s => s.baseCoin);
+  if (symbols.length === 0) throw new Error('No Bybit symbols returned');
+  return symbols;
+}
+
+// ── Binance 24h tickers ──
+async function fetchAllTickersFromBinance() {
+  const r = await fetchWithTimeout(`${CFG.BINANCE_FAPI}/ticker/24hr`);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const data = await r.json();
+  const map = {};
+  for (const t of data) {
+    const sym = t.symbol.replace('USDT','');
+    map[sym] = { vol: parseFloat(t.quoteVolume || 0), price: parseFloat(t.lastPrice || 0) };
+  }
+  return map;
+}
+
+// ── Bybit 24h tickers ──
+async function fetchAllTickersFromBybit() {
+  const r = await fetchWithTimeout(`${CFG.BYBIT_API}/tickers?category=linear`);
+  if (!r.ok) throw new Error('Bybit ticker HTTP ' + r.status);
+  const d = await r.json();
+  const map = {};
+  for (const t of (d?.result?.list || [])) {
+    if (!t.symbol.endsWith('USDT')) continue;
+    const sym = t.symbol.replace('USDT','');
+    map[sym] = { vol: parseFloat(t.turnover24h || 0), price: parseFloat(t.lastPrice || 0) };
+  }
+  return map;
 }
 
 // ── Fetch scanner candles (lightweight) ──
@@ -3094,104 +3267,198 @@ async function runMarketScan() {
   const tf = document.getElementById('scanTfSelect').value;
   const bias = document.getElementById('biasSelect').value;
 
-  // UI state
+  // Reset UI
   document.getElementById('scanBtn').disabled = true;
   document.getElementById('cancelScanBtn').style.display = 'inline-block';
-  document.getElementById('scanProgressBar').style.display = 'block';
-  document.getElementById('scanner-empty').style.display = 'flex';
+  document.getElementById('scanner-empty').style.display = 'none';
   document.getElementById('scan-coin-list').style.display = 'none';
   document.getElementById('scanner-stats-bar').style.display = 'none';
   document.getElementById('scan-sort-bar').style.display = 'none';
-  document.getElementById('scanProgress').textContent = 'Fetching market universe...';
+  document.getElementById('scanProgressWrap').style.display = 'none';
   document.getElementById('scanProgressFill').style.width = '0%';
+  document.getElementById('scanProgress').textContent = '';
+  pipelineShow();
+
+  let allPairs = [];
+  let tickers = {};
+  let dataSource = 'BINANCE';
 
   try {
-    // Step 1: Get all pairs
-    const allPairs = await fetchAllPairs();
-    const tickers = await fetchAllTickers();
+
+    // ══ STEP 1: DISCOVER UNIVERSE ══
+    pipeAddStep(1, '<span class="pipe-spinner"></span>', 'CONNECTING TO BINANCE FUTURES', '', 'Fetching exchange info and all active USDT perpetual pairs...', 'pipe-s1');
+
+    try {
+      allPairs = await fetchAllPairsFromBinance();
+      pipeUpdateStep('pipe-s1', '✓ BINANCE FUTURES — CONNECTED', 'ok',
+        `<span class="hl">${allPairs.length} USDT perpetual pairs</span> detected on <span class="pipe-badge green">BINANCE FUTURES</span>`
+      );
+    } catch(e) {
+      pipeUpdateStep('pipe-s1', '✗ BINANCE FUTURES — FAILED', 'err',
+        `Connection error: <span class="red">${e.message}</span> — switching to Bybit...`
+      );
+      pipeAddStep(1, '<span class="pipe-spinner"></span>', 'RETRYING VIA BYBIT LINEAR', '', 'Fetching active USDT linear perpetuals from Bybit...', 'pipe-s1b');
+      try {
+        allPairs = await fetchAllPairsFromBybit();
+        dataSource = 'BYBIT';
+        pipeUpdateStep('pipe-s1b', '✓ BYBIT LINEAR — CONNECTED', 'ok',
+          `<span class="hl">${allPairs.length} USDT perpetual pairs</span> detected on <span class="pipe-badge blue">BYBIT LINEAR</span>`
+        );
+      } catch(e2) {
+        pipeUpdateStep('pipe-s1b', '✗ BYBIT — ALSO FAILED', 'err',
+          `<span class="red">${e2.message}</span> — both exchanges unreachable, cannot proceed.`
+        );
+        throw new Error('Both Binance and Bybit failed. Check your connection.');
+      }
+    }
 
     if (_scanCancelled) return;
 
-    // Step 2: Hard filters
-    // Exclude by volume (< $1M 24h volume)
-    const MIN_VOL = 1_000_000;
-    let filtered = allPairs.filter(sym => {
-      const t = tickers[sym];
-      return t && t.vol >= MIN_VOL;
-    });
-
-    // Bias filter (exclude top coins by market cap — approximated by volume rank)
-    if (bias !== 'all') {
-      const sorted = Object.entries(tickers).sort((a,b) => b[1].vol - a[1].vol).map(([k])=>k);
-      const topN = bias === 'exclude10' ? 10 : 20;
-      const topSet = new Set(sorted.slice(0, topN));
-      filtered = filtered.filter(sym => !topSet.has(sym));
+    // ══ STEP 2: VOLUME DATA ══
+    pipeAddStep(2, '<span class="pipe-spinner"></span>', `FETCHING 24H VOLUME DATA — ${dataSource}`, '', 'Loading volume and price data for all pairs...', 'pipe-s2');
+    try {
+      tickers = dataSource === 'BINANCE'
+        ? await fetchAllTickersFromBinance()
+        : await fetchAllTickersFromBybit();
+      pipeUpdateStep('pipe-s2', '✓ VOLUME DATA LOADED', 'ok',
+        `<span class="hl">${Object.keys(tickers).length} pairs</span> with 24h volume data from <span class="pipe-badge ${dataSource==='BINANCE'?'green':'blue'}">${dataSource}</span>`
+      );
+    } catch(e) {
+      pipeUpdateStep('pipe-s2', '⚠ VOLUME DATA UNAVAILABLE', 'warn',
+        `<span class="amber">${e.message}</span> — proceeding without volume filter (all pairs included)`
+      );
     }
 
-    // Limit to top 200 by volume to keep scan reasonable
-    filtered.sort((a,b) => (tickers[b]?.vol||0) - (tickers[a]?.vol||0));
-    filtered = filtered.slice(0, 200);
+    if (_scanCancelled) return;
 
-    const total = filtered.length;
-    document.getElementById('scanProgress').textContent = `Scanning 0 / ${total} coins`;
+    // ══ STEP 3: FILTERS ══
+    const rawCount = allPairs.length;
+    const MIN_VOL = 1_000_000;
+    const noVolPairs  = allPairs.filter(sym => !tickers[sym] || tickers[sym].vol < MIN_VOL);
+    const afterVol    = allPairs.filter(sym =>  tickers[sym] && tickers[sym].vol >= MIN_VOL);
 
-    let scanned = 0, valid = 0;
+    let afterBias = [...afterVol];
+    let biasRemoved = 0, biasNames = '';
+    if (bias !== 'all') {
+      const topN = bias === 'exclude10' ? 10 : 20;
+      const sorted = Object.entries(tickers).sort((a,b) => b[1].vol-a[1].vol).map(([k])=>k);
+      const topSet = new Set(sorted.slice(0, topN));
+      const removed = afterBias.filter(s => topSet.has(s));
+      afterBias = afterBias.filter(s => !topSet.has(s));
+      biasRemoved = removed.length;
+      biasNames = removed.slice(0,6).join(', ') + (removed.length > 6 ? ' ...' : '');
+    }
+
+    afterBias.sort((a,b) => (tickers[b]?.vol||0) - (tickers[a]?.vol||0));
+    const CAP = 200;
+    const capRemoved = Math.max(0, afterBias.length - CAP);
+    const afterCap = afterBias.slice(0, CAP);
+
+    pipeAddStep(3, '⊘', 'HARD FILTERS APPLIED', 'warn',
+      `<div class="pipe-filter-row">
+        <span class="pipe-filter-count">${rawCount}</span>
+        <span class="pipe-filter-arrow"> → </span>
+        <span>Raw universe from ${dataSource}</span>
+       </div>
+       <div class="pipe-filter-row">
+        <span class="pipe-filter-count red">−${noVolPairs.length}</span>
+        <span class="pipe-filter-arrow"> → </span>
+        <span class="pipe-filter-reason">Low liquidity removed <span class="amber">(24h vol < $1M)</span></span>
+       </div>
+       ${biasRemoved > 0 ? `<div class="pipe-filter-row">
+        <span class="pipe-filter-count red">−${biasRemoved}</span>
+        <span class="pipe-filter-arrow"> → </span>
+        <span class="pipe-filter-reason">Market bias filter: <span class="amber">${biasNames}</span></span>
+       </div>` : ''}
+       ${capRemoved > 0 ? `<div class="pipe-filter-row">
+        <span class="pipe-filter-count red">−${capRemoved}</span>
+        <span class="pipe-filter-arrow"> → </span>
+        <span class="pipe-filter-reason">Volume cap applied (scanning top ${CAP} only)</span>
+       </div>` : ''}
+       <div class="pipe-filter-row" style="margin-top:5px;padding-top:5px;border-top:1px solid var(--border)">
+        <span class="pipe-filter-count green">${afterCap.length}</span>
+        <span class="pipe-filter-arrow"> → </span>
+        <span><strong style="color:var(--white)">FINAL SCAN LIST</strong> — <span class="hl">${afterCap.length} pairs</span> queued for analysis on <span class="amber">${tf.toUpperCase()}</span></span>
+       </div>`,
+      'pipe-s3'
+    );
+
+    if (_scanCancelled) return;
+
+    // ══ STEP 4: SCAN COINS ══
+    pipeAddStep(4, '<span class="pipe-spinner"></span>', `SCANNING ${afterCap.length} COINS — ${tf.toUpperCase()}`, '',
+      'Fetching 200-bar candles + derivatives for each pair. Running structure, compression, trend, and liquidity engines...', 'pipe-s4');
+    document.getElementById('scanProgressWrap').style.display = 'flex';
+
     const scanResults = [];
+    let failed = 0;
 
-    // Step 3: Process each coin
-    await processWithConcurrency(filtered, async (sym) => {
+    await processWithConcurrency(afterCap, async (sym) => {
       if (_scanCancelled) return;
       try {
         const candles = await fetchScannerCandles(sym, tf, 200);
-        if (!candles || candles.length < 60) return;
-
+        if (!candles || candles.length < 60) { failed++; return; }
         const derivs = await fetchScannerDerivs(sym);
         const result = scoreSymbol(candles, derivs);
         result.symbol = sym;
-        result.price = candles[candles.length-1].close;
-        result.vol = tickers[sym]?.vol || 0;
-        valid++;
+        result.price  = candles[candles.length-1].close;
+        result.vol    = tickers[sym]?.vol || 0;
         scanResults.push(result);
-      } catch(e) {
-        // Skip failed coins silently
-      }
+      } catch(e) { failed++; }
     }, 8, (done, tot) => {
-      scanned = done;
       const pct = Math.round(done / tot * 100);
       document.getElementById('scanProgressFill').style.width = pct + '%';
-      document.getElementById('scanProgress').textContent = `Scanning ${done} / ${tot} coins`;
+      document.getElementById('scanProgress').textContent =
+        `Scanning ${done} / ${tot}  ·  ${scanResults.length} valid  ·  ${failed} skipped`;
     });
 
+    document.getElementById('scanProgressWrap').style.display = 'none';
+
     if (_scanCancelled) {
-      document.getElementById('scanProgress').textContent = 'Scan cancelled.';
+      pipeUpdateStep('pipe-s4', '⊘ SCAN CANCELLED', 'warn', 'User cancelled during coin analysis.');
       return;
     }
 
-    // Sort by score
+    pipeUpdateStep('pipe-s4', '✓ ANALYSIS COMPLETE', 'ok',
+      `<span class="hl">${scanResults.length} coins</span> fully analysed · <span class="red">${failed} skipped</span> (no data / insufficient bars)`
+    );
+
+    // ══ STEP 5: RANK + DISPLAY ══
     scanResults.sort((a,b) => b.score - a.score);
     _scanResults = scanResults;
 
-    // Update stats
     const highPotential = scanResults.filter(r => r.score >= 65).length;
-    document.getElementById('stat-scanned').textContent = scanned;
-    document.getElementById('stat-valid').textContent = scanResults.length;
-    document.getElementById('stat-high').textContent = highPotential;
-    document.getElementById('stat-tf').textContent = tf.toUpperCase();
-    document.getElementById('stat-time').textContent = new Date().toISOString().slice(11,19) + ' UTC';
+    const squeezeSets   = scanResults.filter(r => r.classType === 'squeeze').length;
+    const trendSets     = scanResults.filter(r => r.classType === 'trend').length;
+    const breakoutSets  = scanResults.filter(r => r.classType === 'breakout').length;
+
+    pipeAddStep(5, '◈', 'OPPORTUNITY RANKING READY', 'info',
+      `<span class="pipe-badge green">${highPotential} HIGH POTENTIAL</span> (score ≥ 65) &nbsp;
+       <span class="pipe-badge amber">${breakoutSets} BREAKOUT</span> &nbsp;
+       <span class="pipe-badge red">${squeezeSets} SQUEEZE</span> &nbsp;
+       <span class="pipe-badge blue">${trendSets} TREND CONT.</span> &nbsp;
+       · Completed <span class="hl">${new Date().toISOString().slice(11,19)} UTC</span>`,
+      'pipe-s5'
+    );
+
+    document.getElementById('stat-scanned').textContent = afterCap.length;
+    document.getElementById('stat-valid').textContent   = scanResults.length;
+    document.getElementById('stat-high').textContent    = highPotential;
+    document.getElementById('stat-tf').textContent      = tf.toUpperCase();
+    document.getElementById('stat-time').textContent    = new Date().toISOString().slice(11,19) + ' UTC';
     document.getElementById('scanner-stats-bar').style.display = 'flex';
-    document.getElementById('scan-sort-bar').style.display = 'flex';
+    document.getElementById('scan-sort-bar').style.display     = 'flex';
 
     renderScanResults(scanResults, 'score');
-    document.getElementById('scanProgress').textContent = `Scan complete — ${scanResults.length} coins analyzed`;
-    document.getElementById('scanner-empty').style.display = 'none';
 
   } catch(e) {
-    document.getElementById('scanProgress').textContent = 'Error: ' + e.message;
+    pipeAddStep('!', '✗', 'SCAN ERROR', 'err',
+      `<span class="red">${e.message}</span>`, 'pipe-err');
     console.error(e);
   } finally {
     document.getElementById('scanBtn').disabled = false;
     document.getElementById('cancelScanBtn').style.display = 'none';
-    document.getElementById('scanProgressBar').style.display = 'none';
+    document.getElementById('scanProgressWrap').style.display = 'none';
   }
 }
 
