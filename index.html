@@ -3350,9 +3350,7 @@ async function runMarketScan() {
     }
 
     afterBias.sort((a,b) => (tickers[b]?.vol||0) - (tickers[a]?.vol||0));
-    const CAP = 200;
-    const capRemoved = Math.max(0, afterBias.length - CAP);
-    const afterCap = afterBias.slice(0, CAP);
+    const afterCap = afterBias; // No artificial cap — scan everything that passes real filters
 
     pipeAddStep(3, '⊘', 'HARD FILTERS APPLIED', 'warn',
       `<div class="pipe-filter-row">
@@ -3369,11 +3367,6 @@ async function runMarketScan() {
         <span class="pipe-filter-count red">−${biasRemoved}</span>
         <span class="pipe-filter-arrow"> → </span>
         <span class="pipe-filter-reason">Market bias filter: <span class="amber">${biasNames}</span></span>
-       </div>` : ''}
-       ${capRemoved > 0 ? `<div class="pipe-filter-row">
-        <span class="pipe-filter-count red">−${capRemoved}</span>
-        <span class="pipe-filter-arrow"> → </span>
-        <span class="pipe-filter-reason">Volume cap applied (scanning top ${CAP} only)</span>
        </div>` : ''}
        <div class="pipe-filter-row" style="margin-top:5px;padding-top:5px;border-top:1px solid var(--border)">
         <span class="pipe-filter-count green">${afterCap.length}</span>
