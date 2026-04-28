@@ -2679,15 +2679,18 @@ function updatePriceHeader(ticker, ticker24h, candles, stData, er, tqi, rsi) {
   const bullBiasP = Math.round(bullSMC/totalBias*100);
   const biasEl = document.getElementById('h-bias');
   const biasConf = document.getElementById('h-bias-conf');
+  // Weighted confidence tier: Structure primary, momentum secondary, derivatives minor
+  const _hConfScore = Math.min(100, Math.round(Math.max(bullBiasP, 100-bullBiasP) * 0.8 + (er > 0.4 ? 10 : 0) + (tqi > 0.5 ? 10 : 0)));
+  const _hConfLabel = _hConfScore > 75 ? 'High' : _hConfScore >= 55 ? 'Medium' : 'Low';
   if (bullBiasP >= 62) {
     biasEl.textContent='BULLISH'; biasEl.className='ph-bias-val bullish';
-    biasConf.textContent=bullBiasP+'% SMC BULL';
+    biasConf.textContent=`Confidence: ${_hConfScore}% (${_hConfLabel})`;
   } else if (bullBiasP <= 38) {
     biasEl.textContent='BEARISH'; biasEl.className='ph-bias-val bearish';
-    biasConf.textContent=(100-bullBiasP)+'% SMC BEAR';
+    biasConf.textContent=`Confidence: ${_hConfScore}% (${_hConfLabel})`;
   } else {
     biasEl.textContent='NEUTRAL'; biasEl.className='ph-bias-val neutral';
-    biasConf.textContent='MIXED — '+bullBiasP+'/'+(100-bullBiasP);
+    biasConf.textContent=`Low Confidence — ${bullBiasP}/${100-bullBiasP}`;
   }
 }
 
@@ -2849,10 +2852,11 @@ function updateSRLevels(srLevels) {
 }
 
 function updateTradeIdeas(data) {
-  const { primaryDir, confPips, bullPct, primaryLevels:pl, primaryNarr, counterTxt, counterLevels:cl, counterNarr } = data;
+  const { primaryDir, confPips, bullPct, weightedScore, confidenceLabel, primaryLevels:pl, primaryNarr, counterTxt, counterLevels:cl, counterNarr } = data;
   const isLong = primaryDir === 'LONG';
   const bearPct = 100-bullPct;
   const pips = Array.from({length:8},(_,i)=>`<div class="conf-pip${i<confPips?' filled':''}"></div>`).join('');
+  const confColor = weightedScore > 75 ? 'var(--green)' : weightedScore >= 55 ? 'var(--gold)' : 'var(--red)';
   const biasMeter = `
     <div class="bias-meter">
       <div class="bias-meter-labels">
@@ -2864,7 +2868,12 @@ function updateTradeIdeas(data) {
         <div class="bias-meter-fill" style="width:${bullPct}%"></div>
         <div class="bias-meter-mid"></div>
       </div>
-      <div class="bias-meter-sub">SMC 60% · DERIVATIVES 20% · MOMENTUM 20%</div>
+      <div class="bias-meter-sub">
+        Bias: <span style="color:${isLong?'var(--green)':'var(--red)'}">${isLong?'Bullish':'Bearish'}</span>
+        &nbsp;·&nbsp;
+        Confidence: <span style="color:${confColor}">${weightedScore}% (${confidenceLabel})</span>
+        &nbsp;·&nbsp;Structure 40% · Location 25% · Momentum 20% · Derivatives 15%
+      </div>
     </div>`;
   const primaryCard = `
     <div class="trade-card ${isLong?'long':'short'}">
@@ -2874,7 +2883,7 @@ function updateTradeIdeas(data) {
         <span style="display:flex;align-items:center;gap:4px;margin-left:auto;font-size:8px;color:var(--muted)">CONF <div class="conf-bar">${pips}</div> ${confPips}/8</span>
       </div>
       <div class="trade-levels">
-        <div class="trade-level"><div class="tl-label">ENTRY ZONE</div><div class="tl-val entry">${fmtPrice(pl.entry)}</div></div>
+        <div class="trade-level"><div class="tl-label">ENTRY ZONE <span style="font-size:7px;color:var(--blue)">${isLong?(data.longEntryReason||''):(data.shortEntryReason||'')}</span></div><div class="tl-val entry">${fmtPrice(pl.entry)}</div></div>
         <div class="trade-level"><div class="tl-label">STOP LOSS</div><div class="tl-val sl">${fmtPrice(pl.sl)}</div></div>
         <div class="trade-level"><div class="tl-label">TP 1</div><div class="tl-val tp">${fmtPrice(pl.tp1)}</div></div>
       </div>
@@ -2956,43 +2965,101 @@ function generateTradeIdeas(candles, stData, swings, srLevels, rsi, er, tqi, cur
   const totalScore = bullSMC+bearSMC || 1;
   const bullPct = Math.round(bullSMC/totalScore*100);
   const primaryDir = bullSMC>=bearSMC ? 'LONG' : 'SHORT';
+
+  // ── WEIGHTED CONFIDENCE SCORE (replaces "100% bullish" static logic) ──
+  // Hierarchy: Structure (40%) > Location (25%) > Momentum (20%) > Derivatives (15%)
+  const _structWeight  = 0.40;
+  const _locationWeight= 0.25;
+  const _momentumWeight= 0.20;
+  const _derivWeight   = 0.15;
+
+  const _structConf  = struct.events.length > 0 ? (struct.events[0].dir === (primaryDir==='LONG'?'bull':'bear') ? 1.0 : 0.3) : 0.5;
+  const _locationConf= primaryDir==='LONG' ? (inDiscount?1.0:inPremium?0.1:0.5) : (inPremium?1.0:inDiscount?0.1:0.5);
+  const _momentumConf= primaryDir==='LONG'
+    ? (lastTrend===1 ? (tqi>0.5?1.0:0.65) : 0.2)
+    : (lastTrend===-1? (tqi>0.5?1.0:0.65): 0.2);
+  const _derivConf   = primaryDir==='LONG'
+    ? (funding<-0.01?1.0:funding>0.05?0.1:0.5) * (lsRatio<0.85?1.0:lsRatio>1.3?0.2:0.6)
+    : (funding>0.03?1.0:funding<-0.02?0.1:0.5) * (lsRatio>1.3?1.0:lsRatio<0.85?0.2:0.6);
+
+  const weightedScore = Math.round(
+    (_structConf*_structWeight + _locationConf*_locationWeight + _momentumConf*_momentumWeight + _derivConf*_derivWeight) * 100
+  );
+  const confidenceLabel = weightedScore > 75 ? 'High' : weightedScore >= 55 ? 'Medium' : 'Low';
   const confPips = Math.min(8, Math.round(Math.max(bullPct,100-bullPct)/12.5));
 
-  const longEntry  = inDiscount ? currentPrice : Math.max(discount, currentPrice-atr*0.5);
-  const longSL     = Math.min(lastSL-atr*0.5, longEntry-atr);
+  // ── INTELLIGENT ENTRY LOGIC (SMC-aware, not current price) ──
+  // Long entry: prefer FVG mid below price → else discount boundary → else OB top
+  const bullFVGs = fvgs ? fvgs.filter(g => !g.filled && g.type === 'bull' && (g.top+g.bottom)/2 < currentPrice) : [];
+  const nearestBullFVG = bullFVGs.length > 0 ? bullFVGs[bullFVGs.length-1] : null;
+  let longEntry;
+  let longEntryReason;
+  if (nearestBullFVG) {
+    longEntry = (nearestBullFVG.top + nearestBullFVG.bottom) / 2;
+    longEntryReason = 'FVG MID';
+  } else if (inDiscount || currentPrice <= discount + atr * 0.3) {
+    longEntry = discount;
+    longEntryReason = 'DISCOUNT BOUNDARY';
+  } else {
+    longEntry = Math.max(discount, currentPrice - atr * 0.75);
+    longEntryReason = 'ATR PULLBACK ZONE';
+  }
+  const longSL     = Math.min(lastSL - atr * 0.5, longEntry - atr);
   const longTP1    = equil;
-  const longTP2    = rTarget>longTP1 ? rTarget : lastSH;
-  const longRisk   = longEntry-longSL;
-  const longRR     = longRisk>0 ? ((longTP2-longEntry)/longRisk).toFixed(2) : 'N/A';
+  const longTP2    = rTarget > longTP1 ? rTarget : lastSH;
+  const longRisk   = longEntry - longSL;
+  const longRR     = longRisk > 0 ? ((longTP2 - longEntry) / longRisk).toFixed(2) : 'N/A';
 
-  const shortEntry = inPremium ? currentPrice : Math.min(premium, currentPrice+atr*0.5);
-  const shortSL    = Math.max(lastSH+atr*0.5, shortEntry+atr);
+  // Short entry: prefer FVG mid above price → else premium boundary
+  const bearFVGs = fvgs ? fvgs.filter(g => !g.filled && g.type === 'bear' && (g.top+g.bottom)/2 > currentPrice) : [];
+  const nearestBearFVG = bearFVGs.length > 0 ? bearFVGs[0] : null;
+  let shortEntry;
+  let shortEntryReason;
+  if (nearestBearFVG) {
+    shortEntry = (nearestBearFVG.top + nearestBearFVG.bottom) / 2;
+    shortEntryReason = 'FVG MID';
+  } else if (inPremium || currentPrice >= premium - atr * 0.3) {
+    shortEntry = premium;
+    shortEntryReason = 'PREMIUM BOUNDARY';
+  } else {
+    shortEntry = Math.min(premium, currentPrice + atr * 0.75);
+    shortEntryReason = 'ATR RALLY ZONE';
+  }
+  const shortSL    = Math.max(lastSH + atr * 0.5, shortEntry + atr);
   const shortTP1   = equil;
-  const shortTP2   = sTarget<shortTP1 ? sTarget : lastSL;
-  const shortRisk  = shortSL-shortEntry;
-  const shortRR    = shortRisk>0 ? ((shortEntry-shortTP2)/shortRisk).toFixed(2) : 'N/A';
+  const shortTP2   = sTarget < shortTP1 ? sTarget : lastSL;
+  const shortRisk  = shortSL - shortEntry;
+  const shortRR    = shortRisk > 0 ? ((shortEntry - shortTP2) / shortRisk).toFixed(2) : 'N/A';
 
-  const tqiTxt   = tqi>0.65?'HIGH TQI — strong trend':tqi>0.35?'MODERATE TQI — mixed':'LOW TQI — choppy';
+  const tqiTxt   = tqi>0.65?'HIGH TQI — strong directional flow':tqi>0.35?'MODERATE TQI — mixed momentum':'LOW TQI — choppy, no clear trend';
   const zoneTxt  = inPremium?'PREMIUM zone':inDiscount?'DISCOUNT zone':'EQUILIBRIUM area';
-  const structTxt = struct.events.length>0 ? struct.events[0].label+' at '+fmtPrice(struct.events[0].level) : 'no fresh structure break';
-  const fundTxt  = Math.abs(funding)<0.01?'neutral funding':funding>0?'funding +'+funding.toFixed(4)+'% (longs paying)':'funding '+funding.toFixed(4)+'% (shorts paying)';
-  const lsTxt    = lsRatio>1.2?'L/S crowded long':lsRatio<0.85?'L/S crowded short':'L/S balanced';
+  const _noBOS = !struct.events || struct.events.length === 0;
+  const _noRecentBreak = !struct.recentBOS_up && !struct.recentBOS_down && !struct.recentCHOCH_up && !struct.recentCHOCH_down;
+  const marketCompression = _noBOS && _noRecentBreak;
+  const structTxt = struct.events && struct.events.length > 0
+    ? struct.events[0].label + ' at ' + fmtPrice(struct.events[0].level)
+    : marketCompression
+      ? 'compression / indecision — no BOS or CHoCH detected'
+      : 'no fresh structure break';
+  const fundTxt  = Math.abs(funding)<0.01?'neutral funding':funding>0?'funding +'+funding.toFixed(4)+'% (longs paying — bearish pressure)':'funding '+funding.toFixed(4)+'% (shorts paying — bullish pressure)';
+  const lsTxt    = lsRatio>1.2?'L/S crowded long — squeeze risk':lsRatio<0.85?'L/S crowded short — relief rally risk':'L/S balanced';
   const counterTxt = primaryDir==='LONG'?'SHORT':'LONG';
+  const compressionTxt = marketCompression ? ' CAUTION: No structure break detected — possible chop. Wait for BOS/CHoCH before entry.' : '';
 
   const primaryLevels = primaryDir==='LONG'
     ? {entry:longEntry,sl:longSL,tp1:longTP1,tp2:longTP2,rr:longRR}
     : {entry:shortEntry,sl:shortSL,tp1:shortTP1,tp2:shortTP2,rr:shortRR};
   const primaryNarr = primaryDir==='LONG'
-    ? 'SMC score '+bullPct+'% bullish. Price in '+zoneTxt+' — structure favors LONG. '+structTxt+'. '+tqiTxt+'. RSI '+(rsi?rsi.toFixed(1):'—')+' — '+(rsi<40?'oversold, high-probability zone.':rsi<55?'room to push higher.':'extended — wait for pullback.')+' '+fundTxt+'. '+lsTxt+'. ENTRY near '+fmtPrice(longEntry)+', SL below swing low '+fmtPrice(longSL)+'.'
-    : 'SMC score '+(100-bullPct)+'% bearish. Price in '+zoneTxt+' — structure favors SHORT. '+structTxt+'. '+tqiTxt+'. RSI '+(rsi?rsi.toFixed(1):'—')+' — '+(rsi>65?'extended, distribution likely.':'needs rejection confirmation at resistance.')+' '+fundTxt+'. '+lsTxt+'. ENTRY near '+fmtPrice(shortEntry)+', SL above swing high '+fmtPrice(shortSL)+'.';
+    ? `Confidence: ${weightedScore}% (${confidenceLabel}) — weighted: Structure(40%) · Location(25%) · Momentum(20%) · Derivatives(15%). Price in ${zoneTxt} — holding in discount after internal shift. ${structTxt}. ${tqiTxt}. RSI ${rsi?rsi.toFixed(1):'—'} — ${rsi<40?'demand holding, high-probability zone.':rsi<55?'room to push higher if demand holds.':'extended — better entry on pullback.'}${compressionTxt} ${fundTxt}. ${lsTxt}. Entry at ${fmtPrice(longEntry)} (${longEntryReason}), SL below swing low ${fmtPrice(longSL)}.`
+    : `Confidence: ${weightedScore}% (${confidenceLabel}) — weighted: Structure(40%) · Location(25%) · Momentum(20%) · Derivatives(15%). Price in ${zoneTxt} — rejection likely if distribution holds. ${structTxt}. ${tqiTxt}. RSI ${rsi?rsi.toFixed(1):'—'} — ${rsi>65?'extended, distribution likely.':'needs rejection confirmation at resistance.'}${compressionTxt} ${fundTxt}. ${lsTxt}. Entry at ${fmtPrice(shortEntry)} (${shortEntryReason}), SL above swing high ${fmtPrice(shortSL)}.`;
   const counterLevels = counterTxt==='LONG'
     ? {entry:longEntry,sl:longSL,tp1:longTP1,tp2:longTP2,rr:longRR}
     : {entry:shortEntry,sl:shortSL,tp1:shortTP1,tp2:shortTP2,rr:shortRR};
   const counterNarr = counterTxt==='SHORT'
-    ? 'Counter-trend SHORT (only '+(100-bullPct)+'% bearish score). Valid on '+(inPremium?'rejection candle from premium zone':'CHoCH confirmation on lower TF')+'. Entry '+fmtPrice(shortEntry)+', SL '+fmtPrice(shortSL)+', TP1 '+fmtPrice(shortTP1)+'.'
-    : 'Counter-trend LONG (only '+bullPct+'% bullish score). Valid on '+(inDiscount?'strong demand reaction at discount':'BOS confirmation on lower TF')+'. Entry '+fmtPrice(longEntry)+', SL '+fmtPrice(longSL)+', TP1 '+fmtPrice(longTP1)+'.';
+    ? `Counter-trend SHORT (confidence ${100-weightedScore}% — Low). Valid only on ${inPremium?'rejection candle from premium zone':'CHoCH confirmation on lower TF'}. Entry ${fmtPrice(shortEntry)} (${shortEntryReason}), SL ${fmtPrice(shortSL)}, TP1 ${fmtPrice(shortTP1)}.`
+    : `Counter-trend LONG (confidence ${weightedScore}% — Low). Valid only on ${inDiscount?'strong demand reaction at discount zone':'BOS confirmation on lower TF'}. Entry ${fmtPrice(longEntry)} (${longEntryReason}), SL ${fmtPrice(longSL)}, TP1 ${fmtPrice(longTP1)}.`;
 
-  return {primaryDir,confPips,bullPct,primaryLevels,primaryNarr,counterTxt,counterLevels,counterNarr,atr};
+  return {primaryDir,confPips,bullPct,weightedScore,confidenceLabel,primaryLevels,primaryNarr,counterTxt,counterLevels,counterNarr,atr,longEntryReason,shortEntryReason};
 }
 
 // ═══════════════════════════════════════════════════════════════
