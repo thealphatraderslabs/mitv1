@@ -2244,7 +2244,11 @@ async function fetchOIHistory(symbol) {
     const r = await fetchWithTimeout(`${CFG.BINANCE_FAPI}/openInterestHist?symbol=${symbol}USDT&period=1h&limit=24`);
     if (!r.ok) return null;
     const d = await r.json();
-    return Array.isArray(d) ? d : null;
+    // Binance returns {code, msg} object on error even with HTTP 200
+    if (!Array.isArray(d) || d.length < 2) return null;
+    // Validate it has real data
+    const hasData = d.some(x => parseFloat(x.sumOpenInterest || 0) > 0);
+    return hasData ? d : null;
   } catch(e) { return null; }
 }
 
@@ -2539,32 +2543,25 @@ function renderOrderBlocks(obs, currentPrice) {
 }
 
 
-function renderOISparkline(hist) {
+function renderOISparkline(items) {
   const wrap = document.getElementById('oi-spark');
-  if (!wrap || !hist || hist.length < 2) return;
+  if (!wrap || !items || items.length < 2) return;
   wrap.innerHTML = '';
-  const CONTAINER_H = 36; // matches CSS height in px
-  // Prefer USD value for visible variance, fall back to contracts
-  const vals = hist.map(x => {
-    const usd = parseFloat(x.sumOpenInterestValue || 0);
-    const contracts = parseFloat(x.sumOpenInterest || 0);
-    return usd > 0 ? usd : contracts;
-  });
-  if (!vals.some(v => v > 0)) return;
+  const CONTAINER_H = 36;
+  const vals = items.map(x => typeof x === 'object' ? (x.val || 0) : x);
   const maxV = Math.max(...vals);
   const minV = Math.min(...vals);
   const range = maxV - minV;
-  const MIN_PX = 4;  // minimum bar height in px
-  const MAX_PX = CONTAINER_H; // maximum bar height in px
+  const MIN_PX = 4;
   vals.forEach((v, i) => {
     const px = range > 0
-      ? MIN_PX + ((v - minV) / range) * (MAX_PX - MIN_PX)
-      : MAX_PX * 0.5;
+      ? MIN_PX + ((v - minV) / range) * (CONTAINER_H - MIN_PX)
+      : CONTAINER_H * 0.5;
     const bar = document.createElement('div');
     const dir = i > 0 ? (vals[i] >= vals[i-1] ? 'up' : 'down') : 'up';
     bar.className = 'oi-spark-bar ' + dir;
     bar.style.height = Math.round(px) + 'px';
-    bar.title = '$' + fmtCompact(v);
+    bar.title = fmtCompact(v);
     wrap.appendChild(bar);
   });
 }
@@ -3008,19 +3005,31 @@ async function runAnalysis() {
 
     setStatus(ticker+' · '+tf.toUpperCase()+' · '+new Date().toISOString().slice(11,19)+' UTC','ok');
 
-    // OI history background — also update 24h change
+    // OI history — use API data if available, else fall back to candle volume
     fetchOIHistory(ticker).then(hist => {
-      if (!hist || hist.length < 2) return;
-      renderOISparkline(hist);
-      // Calculate 24h OI change
-      const first = parseFloat(hist[0].sumOpenInterestValue || hist[0].sumOpenInterest || 0);
-      const last  = parseFloat(hist[hist.length-1].sumOpenInterestValue || hist[hist.length-1].sumOpenInterest || 0);
-      if (first > 0) {
-        const chgPct = ((last - first) / first * 100).toFixed(2);
-        const el = document.getElementById('d-oi-chg');
-        if (el) {
-          el.textContent = (chgPct > 0 ? '+' : '') + chgPct + '%';
-          el.className = 'deriv-val ' + (parseFloat(chgPct) > 0 ? 'up' : 'down');
+      if (hist && hist.length >= 2) {
+        // Real OI data from API
+        renderOISparkline(hist.map(x => ({
+          val: parseFloat(x.sumOpenInterestValue || 0) || parseFloat(x.sumOpenInterest || 0),
+          raw: x
+        })));
+        const first = parseFloat(hist[0].sumOpenInterestValue || hist[0].sumOpenInterest || 0);
+        const last  = parseFloat(hist[hist.length-1].sumOpenInterestValue || hist[hist.length-1].sumOpenInterest || 0);
+        if (first > 0) {
+          const chgPct = ((last - first) / first * 100).toFixed(2);
+          const el = document.getElementById('d-oi-chg');
+          if (el) {
+            el.textContent = (parseFloat(chgPct) >= 0 ? '+' : '') + chgPct + '%';
+            el.className = 'deriv-val ' + (parseFloat(chgPct) > 0 ? 'up' : 'down');
+          }
+        }
+      } else {
+        // Fallback: use last 24 candle volumes as proxy for OI activity
+        const last24 = c.slice(-24);
+        if (last24.length >= 2) {
+          renderOISparkline(last24.map(candle => ({ val: candle.vol })));
+          const label = document.querySelector('#oi-spark')?.previousElementSibling;
+          if (label) label.textContent = 'VOLUME PROXY (24 BARS)';
         }
       }
     });
