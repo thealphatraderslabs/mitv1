@@ -650,10 +650,10 @@ body{
 
 /* OI Sparkline */
 .oi-spark-wrap{padding:6px 12px 8px;}
-.oi-spark-bars{display:flex;gap:2px;align-items:flex-end;height:22px;}
-.oi-spark-bar{width:4px;min-height:2px;background:var(--green-dim);}
-.oi-spark-bar.up{background:var(--green);}
-.oi-spark-bar.down{background:var(--red);}
+.oi-spark-bars{display:flex;gap:1px;align-items:flex-end;height:36px;}
+.oi-spark-bar{flex:1;min-height:3px;background:var(--green-dim);}
+.oi-spark-bar.up{background:rgba(0,230,118,0.7);}
+.oi-spark-bar.down{background:rgba(255,68,68,0.6);}
 
 /* ════════════════════════════════════
    SCANNER STAGE
@@ -2543,16 +2543,26 @@ function renderOISparkline(hist) {
   const wrap = document.getElementById('oi-spark');
   if (!wrap || !hist || hist.length < 2) return;
   wrap.innerHTML = '';
-  // hist is raw API array — parse values
-  const vals = hist.map(x => parseFloat(x.sumOpenInterestValue || x.sumOpenInterest || 0));
-  const maxV = Math.max(...vals) || 1;
+  // Prefer USD value for visible variance, fall back to contracts
+  const vals = hist.map(x => {
+    const usd = parseFloat(x.sumOpenInterestValue || 0);
+    const contracts = parseFloat(x.sumOpenInterest || 0);
+    return usd > 0 ? usd : contracts;
+  });
+  if (!vals.some(v => v > 0)) return;
+  const maxV = Math.max(...vals);
   const minV = Math.min(...vals);
-  const range = maxV - minV || 1;
+  const range = maxV - minV;
+  const MIN_H = 15; // minimum bar height % so flat data still shows
+  const MAX_H = 100;
   vals.forEach((v, i) => {
-    const pct = ((v - minV) / range) * 100;
+    // Normalize to MIN_H–MAX_H range so small variances are visible
+    const pct = range > 0 ? MIN_H + ((v - minV) / range) * (MAX_H - MIN_H) : MIN_H;
     const bar = document.createElement('div');
-    bar.className = 'oi-spark-bar ' + (i > 0 ? (vals[i] >= vals[i-1] ? 'up' : 'down') : '');
-    bar.style.height = Math.max(2, pct * 0.22) + 'px';
+    const dir = i > 0 ? (vals[i] >= vals[i-1] ? 'up' : 'down') : 'up';
+    bar.className = 'oi-spark-bar ' + dir;
+    bar.style.height = pct + '%';
+    bar.title = '$' + fmtCompact(v);
     wrap.appendChild(bar);
   });
 }
@@ -2996,8 +3006,22 @@ async function runAnalysis() {
 
     setStatus(ticker+' · '+tf.toUpperCase()+' · '+new Date().toISOString().slice(11,19)+' UTC','ok');
 
-    // OI history background
-    fetchOIHistory(ticker).then(hist => { if (hist) renderOISparkline(hist); });
+    // OI history background — also update 24h change
+    fetchOIHistory(ticker).then(hist => {
+      if (!hist || hist.length < 2) return;
+      renderOISparkline(hist);
+      // Calculate 24h OI change
+      const first = parseFloat(hist[0].sumOpenInterestValue || hist[0].sumOpenInterest || 0);
+      const last  = parseFloat(hist[hist.length-1].sumOpenInterestValue || hist[hist.length-1].sumOpenInterest || 0);
+      if (first > 0) {
+        const chgPct = ((last - first) / first * 100).toFixed(2);
+        const el = document.getElementById('d-oi-chg');
+        if (el) {
+          el.textContent = (chgPct > 0 ? '+' : '') + chgPct + '%';
+          el.className = 'deriv-val ' + (parseFloat(chgPct) > 0 ? 'up' : 'down');
+        }
+      }
+    });
 
   } catch(e) {
     setStatus('ERROR: '+e.message,'err');
