@@ -516,6 +516,302 @@
   .fvg-status { font-size: 8px; color: var(--text3); }
 
   select option { background: #1a1a15; }
+
+  /* ── TAB NAVIGATION ── */
+  #tab-nav {
+    display: flex;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 0 16px;
+    gap: 0;
+  }
+  .tab-btn {
+    padding: 8px 20px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text3);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-bottom: -1px;
+  }
+  .tab-btn:hover { color: var(--text2); }
+  .tab-btn.active { color: var(--amber); border-bottom-color: var(--amber); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* ── SCANNER STYLES ── */
+  #scanner-view {
+    padding: 0;
+    min-height: calc(100vh - 150px);
+  }
+  #scanner-controls {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  #scanner-controls .ibl { font-size: 10px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.1em; }
+  #scanTfSelect, #biasSelect {
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 5px 10px;
+    outline: none;
+    cursor: pointer;
+  }
+  #scanTfSelect:focus, #biasSelect:focus { border-color: var(--amber); }
+  #scanBtn {
+    background: var(--amber3);
+    border: 1px solid var(--amber);
+    color: #000;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 6px 20px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  #scanBtn:hover:not(:disabled) { background: var(--amber); }
+  #scanBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+  #cancelScanBtn {
+    background: transparent;
+    border: 1px solid var(--border2);
+    color: var(--red);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 5px 12px;
+    cursor: pointer;
+    display: none;
+    transition: border-color 0.15s;
+  }
+  #cancelScanBtn:hover { border-color: var(--red); }
+  #scanProgress {
+    font-size: 10px;
+    color: var(--text2);
+    letter-spacing: 0.08em;
+  }
+  #scanProgressBar {
+    width: 180px;
+    height: 3px;
+    background: var(--border2);
+    position: relative;
+    overflow: hidden;
+  }
+  #scanProgressFill {
+    height: 100%;
+    background: var(--amber);
+    width: 0%;
+    transition: width 0.3s;
+  }
+
+  /* Scanner results area */
+  #scanner-results {
+    padding: 0;
+  }
+  #scanner-stats-bar {
+    display: flex;
+    gap: 24px;
+    padding: 6px 16px;
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    font-size: 9px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .scan-stat { display: flex; align-items: center; gap: 6px; }
+  .scan-stat-val { color: var(--amber2); font-weight: 500; }
+
+  /* Sort controls */
+  #scan-sort-bar {
+    display: flex;
+    gap: 0;
+    padding: 6px 16px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    align-items: center;
+  }
+  .sort-btn {
+    padding: 3px 10px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text3);
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+  .sort-btn:hover { color: var(--text2); }
+  .sort-btn.active { color: var(--amber); border-color: var(--border2); background: var(--bg3); }
+  #scan-sort-label { font-size: 9px; color: var(--text3); margin-right: 8px; letter-spacing: 0.1em; }
+
+  /* Coin card */
+  #scan-coin-list {
+    padding: 12px 16px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 10px;
+  }
+  .coin-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    padding: 0;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.1s;
+    position: relative;
+    overflow: hidden;
+  }
+  .coin-card:hover { border-color: var(--amber3); background: var(--bg3); }
+  .coin-card-score-bar {
+    height: 2px;
+    background: var(--border2);
+    position: absolute;
+    top: 0; left: 0; right: 0;
+  }
+  .coin-card-score-fill {
+    height: 100%;
+    transition: width 0.5s;
+  }
+  .coin-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px 6px;
+  }
+  .coin-card-symbol {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--white);
+    letter-spacing: 0.05em;
+  }
+  .coin-card-score {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+  }
+  .score-number {
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .score-label { font-size: 8px; color: var(--text3); letter-spacing: 0.1em; text-transform: uppercase; }
+  .coin-card-state {
+    font-size: 9px;
+    font-weight: 500;
+    padding: 2px 6px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-left: 8px;
+  }
+  .state-trend { background: rgba(0,230,118,0.1); color: var(--green); }
+  .state-range { background: var(--amber-dim); color: var(--amber2); }
+  .state-transition { background: rgba(255,144,64,0.1); color: #ff9040; }
+  .state-expansion { background: var(--blue-dim); color: var(--blue); }
+
+  .coin-card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0 12px 8px;
+  }
+  .scan-tag {
+    font-size: 8px;
+    font-weight: 500;
+    padding: 2px 6px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .scan-tag.breakout { background: rgba(64,196,255,0.1); color: var(--blue); }
+  .scan-tag.squeeze { background: rgba(255,61,61,0.1); color: var(--red); }
+  .scan-tag.trend { background: rgba(0,230,118,0.1); color: var(--green); }
+  .scan-tag.compression { background: var(--amber-dim); color: var(--amber); }
+  .scan-tag.liquidity { background: rgba(255,144,64,0.1); color: #ff9040; }
+  .scan-tag.structure { background: rgba(138,80,255,0.1); color: #b085ff; }
+  .scan-tag.neutral { background: var(--bg4); color: var(--text2); }
+
+  .coin-card-explanation {
+    font-size: 9px;
+    color: var(--text2);
+    font-family: var(--font-sans);
+    line-height: 1.55;
+    padding: 6px 12px 10px;
+    border-top: 1px solid var(--border);
+  }
+  .coin-card-meta {
+    display: flex;
+    gap: 12px;
+    padding: 5px 12px;
+    font-size: 9px;
+    color: var(--text3);
+    border-top: 1px solid var(--border);
+  }
+  .coin-meta-item { display: flex; gap: 4px; }
+  .coin-meta-val { color: var(--text2); }
+
+  /* Classification badge */
+  .class-badge {
+    font-size: 8px;
+    font-weight: 600;
+    padding: 2px 8px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .class-breakout { background: rgba(64,196,255,0.15); color: var(--blue); }
+  .class-squeeze  { background: rgba(255,61,61,0.15); color: var(--red); }
+  .class-trend    { background: rgba(0,230,118,0.15); color: var(--green); }
+
+  /* Scanner empty/loading states */
+  #scanner-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 300px;
+    color: var(--text3);
+    gap: 10px;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .scanner-ascii {
+    font-size: 22px;
+    color: var(--border2);
+    line-height: 1.3;
+    text-align: center;
+    margin-bottom: 6px;
+  }
+
+  /* Rank badge */
+  .rank-badge {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--text3);
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .rank-badge.top3 { border-color: var(--amber3); color: var(--amber); }
 </style>
 </head>
 <body>
@@ -575,6 +871,15 @@
     <span id="last-update" style="color:var(--amber2)">—</span>
   </div>
 </div>
+
+<!-- Tab Navigation -->
+<div id="tab-nav">
+  <button class="tab-btn active" data-tab="analysis">▣ ANALYSIS</button>
+  <button class="tab-btn" data-tab="scanner">◈ MARKET SCANNER</button>
+</div>
+
+<!-- TAB 1: ANALYSIS -->
+<div id="tab-analysis" class="tab-content active">
 
 <!-- Main grid -->
 <div id="main">
@@ -837,7 +1142,65 @@
 
 </div><!-- /main -->
 
-<script>
+</div><!-- /tab-analysis -->
+
+<!-- TAB 2: MARKET SCANNER -->
+<div id="tab-scanner" class="tab-content">
+  <div id="scanner-view">
+
+    <!-- Scanner Controls -->
+    <div id="scanner-controls">
+      <span class="ibl">TIMEFRAME</span>
+      <select id="scanTfSelect">
+        <option value="5m">5m</option>
+        <option value="15m">15m</option>
+        <option value="1h" selected>1H</option>
+        <option value="4h">4H</option>
+        <option value="1d">1D</option>
+        <option value="1w">1W</option>
+      </select>
+      <span class="ibl">MARKET BIAS</span>
+      <select id="biasSelect">
+        <option value="all">Include All</option>
+        <option value="exclude10">Exclude Top 10</option>
+        <option value="exclude20">Exclude Top 20</option>
+      </select>
+      <button id="scanBtn">◈ SCAN MARKET</button>
+      <button id="cancelScanBtn">✕ CANCEL</button>
+      <div id="scanProgressBar" style="display:none"><div id="scanProgressFill"></div></div>
+      <span id="scanProgress"></span>
+    </div>
+
+    <!-- Scanner Stats Bar -->
+    <div id="scanner-stats-bar" style="display:none">
+      <div class="scan-stat">SCANNED: <span class="scan-stat-val" id="stat-scanned">0</span></div>
+      <div class="scan-stat">VALID: <span class="scan-stat-val" id="stat-valid">0</span></div>
+      <div class="scan-stat">HIGH POTENTIAL: <span class="scan-stat-val" id="stat-high">0</span></div>
+      <div class="scan-stat">TIMEFRAME: <span class="scan-stat-val" id="stat-tf">—</span></div>
+      <div class="scan-stat">COMPLETED: <span class="scan-stat-val" id="stat-time">—</span></div>
+    </div>
+
+    <!-- Sort Bar -->
+    <div id="scan-sort-bar" style="display:none">
+      <span id="scan-sort-label">SORT:</span>
+      <button class="sort-btn active" data-sort="score">BY SCORE</button>
+      <button class="sort-btn" data-sort="breakout">BREAKOUT</button>
+      <button class="sort-btn" data-sort="squeeze">SQUEEZE</button>
+      <button class="sort-btn" data-sort="trend">TREND</button>
+    </div>
+
+    <!-- Results -->
+    <div id="scanner-results">
+      <div id="scanner-empty">
+        <div class="scanner-ascii">╔══════════╗<br>║  ◈ SCAN  ║<br>╚══════════╝</div>
+        <span>SELECT TIMEFRAME AND SCAN</span>
+        <span style="font-size:9px;color:var(--border2)">DISCOVERS WHERE PRESSURE IS BUILDING</span>
+      </div>
+      <div id="scan-coin-list" style="display:none"></div>
+    </div>
+
+  </div>
+</div><!-- /tab-scanner -->
 // ═══════════════════════════════════════════════
 // CONFIGURATION
 // ═══════════════════════════════════════════════
@@ -2328,6 +2691,590 @@ window.runAnalysis = async function() {
   }
 };
 
+// ═══════════════════════════════════════════════
+// TAB SYSTEM
+// ═══════════════════════════════════════════════
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
+// ═══════════════════════════════════════════════
+// MARKET SCANNER ENGINE
+// ═══════════════════════════════════════════════
+
+let _scanCancelled = false;
+let _scanResults = [];
+
+// ── Step 1: Fetch all USDT perp pairs from Binance Futures ──
+async function fetchAllPairs() {
+  const r = await fetchWithTimeout(`${CFG.BINANCE_FAPI}/exchangeInfo`);
+  if (!r.ok) throw new Error('Failed to fetch exchange info');
+  const d = await r.json();
+  return d.symbols
+    .filter(s => s.quoteAsset === 'USDT' && s.contractType === 'PERPETUAL' && s.status === 'TRADING')
+    .map(s => s.baseAsset);
+}
+
+// ── Fetch 24h ticker for volume filter ──
+async function fetchAllTickers() {
+  try {
+    const r = await fetchWithTimeout(`${CFG.BINANCE_FAPI}/ticker/24hr`);
+    if (!r.ok) return {};
+    const data = await r.json();
+    const map = {};
+    for (const t of data) {
+      const sym = t.symbol.replace('USDT','');
+      map[sym] = { vol: parseFloat(t.quoteVolume || 0), price: parseFloat(t.lastPrice || 0) };
+    }
+    return map;
+  } catch(e) { return {}; }
+}
+
+// ── Fetch scanner candles (lightweight) ──
+async function fetchScannerCandles(symbol, tf, limit = 200) {
+  const tfMap = { '5m':'5m','15m':'15m','1h':'1h','4h':'4h','1d':'1d','1w':'1w' };
+  const interval = tfMap[tf] || '1h';
+  const url = `${CFG.BINANCE_FAPI}/klines?symbol=${symbol}USDT&interval=${interval}&limit=${limit}`;
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), 7000);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(id);
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (!Array.isArray(d) || d.length < 50) return null;
+    return d.map(k => ({ time:+k[0], open:+k[1], high:+k[2], low:+k[3], close:+k[4], vol:+k[5] }));
+  } catch(e) {
+    clearTimeout(id);
+    return null;
+  }
+}
+
+// ── Fetch scanner derivatives (single fast endpoint) ──
+async function fetchScannerDerivs(symbol) {
+  try {
+    const [fr, oi, ls] = await Promise.allSettled([
+      fetchWithTimeout(`${CFG.BINANCE_FAPI}/premiumIndex?symbol=${symbol}USDT`).then(r => r.ok ? r.json() : null).catch(()=>null),
+      fetchWithTimeout(`${CFG.BINANCE_FAPI}/openInterest?symbol=${symbol}USDT`).then(r => r.ok ? r.json() : null).catch(()=>null),
+      fetchWithTimeout(`${CFG.BINANCE_FAPI}/globalLongShortAccountRatio?symbol=${symbol}USDT&period=5m&limit=1`).then(r => r.ok ? r.json() : null).catch(()=>null),
+    ]);
+    const frData = fr.status === 'fulfilled' ? fr.value : null;
+    const oiData = oi.status === 'fulfilled' ? oi.value : null;
+    const lsData = ls.status === 'fulfilled' ? (Array.isArray(ls.value) ? ls.value[0] : null) : null;
+    return {
+      funding: frData ? parseFloat(frData.lastFundingRate || 0) * 100 : 0,
+      oi: oiData ? parseFloat(oiData.openInterest || 0) : 0,
+      oiVal: oiData ? parseFloat(oiData.openInterest || 0) * (frData ? parseFloat(frData.markPrice || 1) : 1) : 0,
+      lsRatio: lsData ? parseFloat(lsData.longShortRatio || 1) : 1,
+    };
+  } catch(e) { return { funding:0, oi:0, oiVal:0, lsRatio:1 }; }
+}
+
+// ── MARKET STATE DETECTOR ──
+function detectMarketState(candles, swings, tqi, er, stTrend) {
+  const n = candles.length;
+  const { highs, lows } = swings;
+
+  // ATR contraction
+  const atrFull = calcATR(candles, 14);
+  const atrRecent = atrFull.slice(-10).filter(Boolean);
+  const atrOld = atrFull.slice(-30, -10).filter(Boolean);
+  const avgAtrRecent = atrRecent.reduce((a,b)=>a+b,0)/Math.max(atrRecent.length,1);
+  const avgAtrOld = atrOld.reduce((a,b)=>a+b,0)/Math.max(atrOld.length,1);
+  const atrExpanding = avgAtrRecent > avgAtrOld * 1.2;
+  const atrContracting = avgAtrRecent < avgAtrOld * 0.8;
+
+  // Structure: check last 3 swing highs/lows for HH/HL or LH/LL
+  let hhCount = 0, hlCount = 0, llCount = 0, lhCount = 0;
+  for (let i = 1; i < Math.min(highs.length, 4); i++) {
+    if (highs[i].price > highs[i-1].price) hhCount++; else lhCount++;
+  }
+  for (let i = 1; i < Math.min(lows.length, 4); i++) {
+    if (lows[i].price > lows[i-1].price) hlCount++; else llCount++;
+  }
+
+  const trendingUp = hhCount >= 1 && hlCount >= 1;
+  const trendingDown = llCount >= 1 && lhCount >= 1;
+
+  // Recent BOS/CHoCH
+  const structEvents = detectStructure(candles, highs, lows);
+  const hasBOS = structEvents.length > 0;
+
+  if (atrExpanding && (trendingUp || trendingDown)) return 'EXPANSION';
+  if (trendingUp || trendingDown) {
+    if (er > 0.4 || tqi > 0.55) return 'TREND';
+  }
+  if (hasBOS || (trendingUp && llCount > 0) || (trendingDown && hhCount > 0)) return 'TRANSITION';
+  return 'RANGE';
+}
+
+// ── SCORING ENGINE ──
+function scoreSymbol(candles, derivs) {
+  const closes = candles.map(c => c.close);
+  const n = candles.length;
+  const currentPrice = closes[n-1];
+
+  // Core calculations
+  const atrArr = calcATR(candles, 14);
+  const atr = atrArr[atrArr.length-1] || currentPrice * 0.01;
+  const rsiArr = calcRSI(closes, 14);
+  const rsi = rsiArr[rsiArr.length-1] || 50;
+  const er = calcER(closes, 20);
+  const tqi = calcTQI(candles, 20, 20, 10);
+  const stData = calcSuperTrend(candles, 3.0, 14);
+  const stTrend = stData.trend[n-1] || 1;
+  const swings = findSwings(candles, 5);
+  const fvgs = findFVGs(candles);
+  const srLevels = buildSRLevels(candles, swings.highs, swings.lows, currentPrice);
+
+  // Market state
+  const marketState = detectMarketState(candles, swings, tqi, er, stTrend);
+
+  // ── 1. STRUCTURE SCORE (0-100) ──
+  let structScore = 0;
+  const { highs, lows } = swings;
+
+  // S/R proximity
+  const nearLevels = srLevels.filter(l => Math.abs(l.dist) < 2.0);
+  structScore += Math.min(nearLevels.length * 12, 36);
+
+  // Premium/discount zones
+  if (highs.length > 0 && lows.length > 0) {
+    const lastSH = highs[highs.length-1].price;
+    const lastSL = lows[lows.length-1].price;
+    const rng = lastSH - lastSL || currentPrice * 0.05;
+    const pctInRange = (currentPrice - lastSL) / rng;
+    // Reward if near discount or premium (extremes = opportunity)
+    if (pctInRange < 0.25 || pctInRange > 0.75) structScore += 25;
+    else if (pctInRange < 0.35 || pctInRange > 0.65) structScore += 12;
+  }
+
+  // Structure events (BOS/CHoCH)
+  const structEvents = detectStructure(candles, highs, lows);
+  if (structEvents.length > 0) structScore += 20;
+
+  // FVG nearby
+  const nearFVG = fvgs.filter(g => !g.filled &&
+    Math.abs((g.top + g.bottom)/2 - currentPrice) / currentPrice < 0.03);
+  if (nearFVG.length > 0) structScore += 15;
+
+  structScore = Math.min(100, structScore);
+
+  // ── 2. COMPRESSION SCORE (0-100) ──
+  let compressionScore = 0;
+
+  // ATR contraction
+  const atrFull = calcATR(candles, 14);
+  const atrRecent10 = atrFull.slice(-10).filter(Boolean);
+  const atrOlder = atrFull.slice(-30,-10).filter(Boolean);
+  const avgR = atrRecent10.reduce((a,b)=>a+b,0)/Math.max(atrRecent10.length,1);
+  const avgO = atrOlder.reduce((a,b)=>a+b,0)/Math.max(atrOlder.length,1);
+  if (avgO > 0) {
+    const contractionRatio = avgR / avgO;
+    if (contractionRatio < 0.6) compressionScore += 50;
+    else if (contractionRatio < 0.75) compressionScore += 35;
+    else if (contractionRatio < 0.85) compressionScore += 20;
+    else if (contractionRatio < 0.95) compressionScore += 8;
+  }
+
+  // ER (low ER = compression/choppiness)
+  if (er < 0.20) compressionScore += 30;
+  else if (er < 0.30) compressionScore += 20;
+  else if (er < 0.40) compressionScore += 10;
+
+  // Price range tightening (last 10 vs prior 20 bars)
+  const recent10 = candles.slice(-10);
+  const prior20 = candles.slice(-30,-10);
+  const r10Range = Math.max(...recent10.map(c=>c.high)) - Math.min(...recent10.map(c=>c.low));
+  const p20Range = Math.max(...prior20.map(c=>c.high)) - Math.min(...prior20.map(c=>c.low));
+  if (p20Range > 0 && r10Range / p20Range < 0.5) compressionScore += 20;
+
+  compressionScore = Math.min(100, compressionScore);
+
+  // ── 3. TREND CONTEXT SCORE (0-100) ──
+  let trendScore = 0;
+  trendScore += Math.round(tqi * 60);
+  if (er > 0.5) trendScore += 25;
+  else if (er > 0.35) trendScore += 12;
+  // SuperTrend alignment with price position
+  if (stTrend === 1 && currentPrice > stData.stLine[n-1]) trendScore += 15;
+  else if (stTrend === -1 && currentPrice < stData.stLine[n-1]) trendScore += 15;
+  trendScore = Math.min(100, trendScore);
+
+  // ── 4. LIQUIDITY SCORE (0-100) ──
+  let liquidityScore = 0;
+
+  // Equal highs/lows (liquidity clusters)
+  const tolerance = currentPrice * 0.003;
+  let eqHighs = 0, eqLows = 0;
+  for (let i = 0; i < highs.length - 1; i++) {
+    for (let j = i+1; j < highs.length; j++) {
+      if (Math.abs(highs[i].price - highs[j].price) < tolerance) eqHighs++;
+    }
+  }
+  for (let i = 0; i < lows.length - 1; i++) {
+    for (let j = i+1; j < lows.length; j++) {
+      if (Math.abs(lows[i].price - lows[j].price) < tolerance) eqLows++;
+    }
+  }
+  liquidityScore += Math.min(eqHighs * 18, 36);
+  liquidityScore += Math.min(eqLows * 18, 36);
+
+  // FVG liquidity void
+  const unfilledFVGs = fvgs.filter(g => !g.filled);
+  liquidityScore += Math.min(unfilledFVGs.length * 12, 28);
+
+  liquidityScore = Math.min(100, liquidityScore);
+
+  // ── BASE SCORE ──
+  let baseScore = 0.40 * structScore + 0.25 * compressionScore + 0.15 * trendScore + 0.15 * liquidityScore;
+
+  // ── MARKET STATE MODIFIERS ──
+  if (marketState === 'TREND') {
+    // Favor trend continuation setups
+    if (stTrend === 1 && compressionScore > 40) baseScore *= 1.1; // pullback in uptrend
+    if (structEvents.length > 0 && structEvents[0].dir !== (stTrend === 1 ? 'bull' : 'bear')) baseScore *= 0.85;
+  } else if (marketState === 'RANGE') {
+    // Favor breakout compression setups
+    baseScore = baseScore * 0.85 + compressionScore * 0.15;
+  } else if (marketState === 'TRANSITION') {
+    // Favor reversals, boost structure events
+    if (structEvents.length > 0) baseScore *= 1.15;
+  } else if (marketState === 'EXPANSION') {
+    // Penalize — avoid chasing
+    baseScore *= 0.75;
+  }
+
+  // ── DERIVATIVE VALIDATION ──
+  // Only apply if price near key level OR structure setup exists
+  const nearKeyLevel = nearLevels.length > 0;
+  const hasStructureSetup = structEvents.length > 0 || nearFVG.length > 0;
+  let derivImpact = 0;
+
+  if (nearKeyLevel || hasStructureSetup) {
+    const { funding, lsRatio } = derivs;
+    let derivAligned = 0, derivOpposing = 0;
+
+    // Evaluate derivative alignment with price context
+    const bullContext = stTrend === 1 || (structEvents.length > 0 && structEvents[0].dir === 'bull');
+    const bearContext = stTrend === -1 || (structEvents.length > 0 && structEvents[0].dir === 'bear');
+
+    // Funding: negative funding + bull context = squeeze potential (aligned)
+    if (bullContext) {
+      if (funding < -0.01) derivAligned++;
+      else if (funding > 0.05) derivOpposing++;
+      if (lsRatio < 0.85) derivAligned++;
+      else if (lsRatio > 1.3) derivOpposing++;
+    } else if (bearContext) {
+      if (funding > 0.03) derivAligned++;
+      else if (funding < -0.02) derivOpposing++;
+      if (lsRatio > 1.3) derivAligned++;
+      else if (lsRatio < 0.85) derivOpposing++;
+    }
+
+    // Extreme funding = potential squeeze
+    if (Math.abs(funding) > 0.1) derivAligned++;
+
+    const derivTotal = derivAligned + derivOpposing || 1;
+    const derivNet = (derivAligned - derivOpposing) / derivTotal;
+    derivImpact = derivNet > 0.3 ? baseScore * 0.20 : derivNet < -0.3 ? -baseScore * 0.10 : 0;
+
+    // Transition state: derivatives matter more
+    if (marketState === 'TRANSITION') derivImpact *= 1.5;
+  }
+
+  const finalScore = Math.min(100, Math.max(0, Math.round(baseScore + derivImpact)));
+
+  // ── TAG GENERATION ──
+  const tags = [];
+  if (compressionScore > 55) tags.push({ label: 'HIGH COMPRESSION', type: 'compression' });
+  else if (compressionScore > 35) tags.push({ label: 'COMPRESSING', type: 'compression' });
+  if (nearFVG.length > 0) tags.push({ label: `${nearFVG.length} FVG NEARBY`, type: 'liquidity' });
+  if (eqHighs > 0) tags.push({ label: 'EQUAL HIGHS', type: 'liquidity' });
+  if (eqLows > 0) tags.push({ label: 'EQUAL LOWS', type: 'liquidity' });
+  if (structEvents.length > 0) tags.push({ label: structEvents[0].label, type: 'structure' });
+  if (nearLevels.length >= 2) tags.push({ label: 'KEY LEVEL', type: 'structure' });
+  if (derivs.funding < -0.05) tags.push({ label: 'SHORTS PAYING', type: 'squeeze' });
+  if (derivs.funding > 0.05) tags.push({ label: 'LONGS PAYING', type: 'squeeze' });
+  if (derivs.lsRatio > 1.4) tags.push({ label: 'LONGS CROWDED', type: 'squeeze' });
+  if (derivs.lsRatio < 0.7) tags.push({ label: 'SHORTS CROWDED', type: 'squeeze' });
+  if (tqi > 0.65) tags.push({ label: 'HIGH TQI', type: 'trend' });
+  if (er > 0.5) tags.push({ label: 'HIGH EFFICIENCY', type: 'trend' });
+  if (stTrend === 1) tags.push({ label: 'ST BULLISH', type: 'trend' });
+  else tags.push({ label: 'ST BEARISH', type: 'breakout' });
+
+  // ── CLASSIFICATION ──
+  let classification = 'BREAKOUT BUILDUP';
+  let classType = 'breakout';
+  if (marketState === 'TREND' && trendScore > 50) {
+    classification = 'TREND CONTINUATION';
+    classType = 'trend';
+  } else if (derivs.funding > 0.08 || derivs.funding < -0.05 || derivs.lsRatio > 1.5 || derivs.lsRatio < 0.65) {
+    if (nearKeyLevel || hasStructureSetup) {
+      classification = 'SQUEEZE SETUP';
+      classType = 'squeeze';
+    }
+  }
+
+  // ── EXPLANATION ──
+  const zoneTxt = (() => {
+    if (highs.length > 0 && lows.length > 0) {
+      const lastSH = highs[highs.length-1].price;
+      const lastSL = lows[lows.length-1].price;
+      const rng = lastSH - lastSL || 1;
+      const pct = (currentPrice - lastSL) / rng;
+      if (pct < 0.25) return 'discount zone';
+      if (pct > 0.75) return 'premium zone';
+      return 'equilibrium area';
+    }
+    return 'mid-range';
+  })();
+
+  const comprTxt = compressionScore > 55 ? 'Strong ATR contraction signals energy buildup.' :
+    compressionScore > 35 ? 'Moderate compression detected.' : 'Low compression.';
+  const fundTxt = Math.abs(derivs.funding) < 0.01 ? '' :
+    derivs.funding > 0 ? `Funding +${derivs.funding.toFixed(3)}% — longs paying.` :
+    `Funding ${derivs.funding.toFixed(3)}% — shorts paying.`;
+  const lsTxt = derivs.lsRatio > 1.3 ? 'Longs crowded at ' + derivs.lsRatio.toFixed(2) + 'x.' :
+    derivs.lsRatio < 0.8 ? 'Shorts crowded at ' + derivs.lsRatio.toFixed(2) + 'x.' : '';
+  const structTxt = structEvents.length > 0 ? `${structEvents[0].label} detected.` : '';
+
+  const explanation = `${marketState} market. Price in ${zoneTxt}. ${comprTxt} ${structTxt} ${fundTxt} ${lsTxt}`.trim().replace(/\s+/g,' ');
+
+  return {
+    score: finalScore,
+    marketState,
+    classification,
+    classType,
+    tags: tags.slice(0, 5),
+    explanation,
+    er,
+    tqi,
+    compressionScore,
+    structScore,
+    liquidityScore,
+    trendScore,
+    funding: derivs.funding,
+    lsRatio: derivs.lsRatio,
+    stTrend,
+  };
+}
+
+// ── Concurrency-controlled batch processor ──
+async function processWithConcurrency(items, fn, concurrency = 6, onProgress) {
+  const results = [];
+  let idx = 0;
+  let completed = 0;
+
+  async function worker() {
+    while (idx < items.length && !_scanCancelled) {
+      const i = idx++;
+      const result = await fn(items[i], i);
+      results[i] = result;
+      completed++;
+      if (onProgress) onProgress(completed, items.length);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, worker);
+  await Promise.all(workers);
+  return results;
+}
+
+// ── MAIN SCAN FUNCTION ──
+async function runMarketScan() {
+  _scanCancelled = false;
+  const tf = document.getElementById('scanTfSelect').value;
+  const bias = document.getElementById('biasSelect').value;
+
+  // UI state
+  document.getElementById('scanBtn').disabled = true;
+  document.getElementById('cancelScanBtn').style.display = 'inline-block';
+  document.getElementById('scanProgressBar').style.display = 'block';
+  document.getElementById('scanner-empty').style.display = 'flex';
+  document.getElementById('scan-coin-list').style.display = 'none';
+  document.getElementById('scanner-stats-bar').style.display = 'none';
+  document.getElementById('scan-sort-bar').style.display = 'none';
+  document.getElementById('scanProgress').textContent = 'Fetching market universe...';
+  document.getElementById('scanProgressFill').style.width = '0%';
+
+  try {
+    // Step 1: Get all pairs
+    const allPairs = await fetchAllPairs();
+    const tickers = await fetchAllTickers();
+
+    if (_scanCancelled) return;
+
+    // Step 2: Hard filters
+    // Exclude by volume (< $1M 24h volume)
+    const MIN_VOL = 1_000_000;
+    let filtered = allPairs.filter(sym => {
+      const t = tickers[sym];
+      return t && t.vol >= MIN_VOL;
+    });
+
+    // Bias filter (exclude top coins by market cap — approximated by volume rank)
+    if (bias !== 'all') {
+      const sorted = Object.entries(tickers).sort((a,b) => b[1].vol - a[1].vol).map(([k])=>k);
+      const topN = bias === 'exclude10' ? 10 : 20;
+      const topSet = new Set(sorted.slice(0, topN));
+      filtered = filtered.filter(sym => !topSet.has(sym));
+    }
+
+    // Limit to top 200 by volume to keep scan reasonable
+    filtered.sort((a,b) => (tickers[b]?.vol||0) - (tickers[a]?.vol||0));
+    filtered = filtered.slice(0, 200);
+
+    const total = filtered.length;
+    document.getElementById('scanProgress').textContent = `Scanning 0 / ${total} coins`;
+
+    let scanned = 0, valid = 0;
+    const scanResults = [];
+
+    // Step 3: Process each coin
+    await processWithConcurrency(filtered, async (sym) => {
+      if (_scanCancelled) return;
+      try {
+        const candles = await fetchScannerCandles(sym, tf, 200);
+        if (!candles || candles.length < 60) return;
+
+        const derivs = await fetchScannerDerivs(sym);
+        const result = scoreSymbol(candles, derivs);
+        result.symbol = sym;
+        result.price = candles[candles.length-1].close;
+        result.vol = tickers[sym]?.vol || 0;
+        valid++;
+        scanResults.push(result);
+      } catch(e) {
+        // Skip failed coins silently
+      }
+    }, 8, (done, tot) => {
+      scanned = done;
+      const pct = Math.round(done / tot * 100);
+      document.getElementById('scanProgressFill').style.width = pct + '%';
+      document.getElementById('scanProgress').textContent = `Scanning ${done} / ${tot} coins`;
+    });
+
+    if (_scanCancelled) {
+      document.getElementById('scanProgress').textContent = 'Scan cancelled.';
+      return;
+    }
+
+    // Sort by score
+    scanResults.sort((a,b) => b.score - a.score);
+    _scanResults = scanResults;
+
+    // Update stats
+    const highPotential = scanResults.filter(r => r.score >= 65).length;
+    document.getElementById('stat-scanned').textContent = scanned;
+    document.getElementById('stat-valid').textContent = scanResults.length;
+    document.getElementById('stat-high').textContent = highPotential;
+    document.getElementById('stat-tf').textContent = tf.toUpperCase();
+    document.getElementById('stat-time').textContent = new Date().toISOString().slice(11,19) + ' UTC';
+    document.getElementById('scanner-stats-bar').style.display = 'flex';
+    document.getElementById('scan-sort-bar').style.display = 'flex';
+
+    renderScanResults(scanResults, 'score');
+    document.getElementById('scanProgress').textContent = `Scan complete — ${scanResults.length} coins analyzed`;
+    document.getElementById('scanner-empty').style.display = 'none';
+
+  } catch(e) {
+    document.getElementById('scanProgress').textContent = 'Error: ' + e.message;
+    console.error(e);
+  } finally {
+    document.getElementById('scanBtn').disabled = false;
+    document.getElementById('cancelScanBtn').style.display = 'none';
+    document.getElementById('scanProgressBar').style.display = 'none';
+  }
+}
+
+// ── Render Results ──
+function renderScanResults(results, sortKey) {
+  let sorted = [...results];
+  if (sortKey === 'score') {
+    sorted.sort((a,b) => b.score - a.score);
+  } else if (sortKey === 'breakout') {
+    sorted = sorted.filter(r => r.classType === 'breakout').concat(sorted.filter(r => r.classType !== 'breakout'));
+  } else if (sortKey === 'squeeze') {
+    sorted = sorted.filter(r => r.classType === 'squeeze').concat(sorted.filter(r => r.classType !== 'squeeze'));
+  } else if (sortKey === 'trend') {
+    sorted = sorted.filter(r => r.classType === 'trend').concat(sorted.filter(r => r.classType !== 'trend'));
+  }
+
+  const list = document.getElementById('scan-coin-list');
+  list.innerHTML = '';
+  list.style.display = 'grid';
+
+  sorted.slice(0, 80).forEach((coin, idx) => {
+    const scoreColor = coin.score >= 75 ? 'var(--green)' : coin.score >= 55 ? 'var(--amber)' : 'var(--text2)';
+    const barColor = coin.score >= 75 ? '#00e676' : coin.score >= 55 ? '#ffb300' : '#5a5035';
+    const stateClass = {
+      'TREND': 'state-trend',
+      'RANGE': 'state-range',
+      'TRANSITION': 'state-transition',
+      'EXPANSION': 'state-expansion'
+    }[coin.marketState] || 'state-range';
+
+    const classClass = {
+      'breakout': 'class-breakout',
+      'squeeze': 'class-squeeze',
+      'trend': 'class-trend'
+    }[coin.classType] || 'class-breakout';
+
+    const tagsHtml = coin.tags.map(t =>
+      `<span class="scan-tag ${t.type}">${t.label}</span>`
+    ).join('');
+
+    const card = document.createElement('div');
+    card.className = 'coin-card';
+    card.innerHTML = `
+      <div class="coin-card-score-bar">
+        <div class="coin-card-score-fill" style="width:${coin.score}%;background:${barColor}"></div>
+      </div>
+      <div class="coin-card-header">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="rank-badge ${idx<3?'top3':''}">${idx+1}</div>
+          <div class="coin-card-symbol">${coin.symbol}</div>
+          <span class="coin-card-state ${stateClass}">${coin.marketState}</span>
+          <span class="class-badge ${classClass}">${coin.classification}</span>
+        </div>
+        <div class="coin-card-score">
+          <div class="score-number" style="color:${scoreColor}">${coin.score}</div>
+          <div class="score-label">SCORE</div>
+        </div>
+      </div>
+      <div class="coin-card-tags">${tagsHtml}</div>
+      <div class="coin-card-explanation">${coin.explanation}</div>
+      <div class="coin-card-meta">
+        <div class="coin-meta-item">ER:<span class="coin-meta-val">${(coin.er||0).toFixed(2)}</span></div>
+        <div class="coin-meta-item">TQI:<span class="coin-meta-val">${(coin.tqi||0).toFixed(2)}</span></div>
+        <div class="coin-meta-item">FUND:<span class="coin-meta-val ${(coin.funding||0)>0.05?'down':(coin.funding||0)<-0.02?'up':''}">${(coin.funding||0).toFixed(3)}%</span></div>
+        <div class="coin-meta-item">L/S:<span class="coin-meta-val">${(coin.lsRatio||1).toFixed(2)}</span></div>
+        <div class="coin-meta-item">VOL:<span class="coin-meta-val">${fmtCompact(coin.vol)}</span></div>
+      </div>
+    `;
+
+    // Click to open in Analysis tab
+    card.addEventListener('click', () => {
+      document.getElementById('tickerInput').value = coin.symbol;
+      document.getElementById('tfSelect').value = document.getElementById('scanTfSelect').value;
+      // Switch to analysis tab
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      document.querySelector('[data-tab="analysis"]').classList.add('active');
+      document.getElementById('tab-analysis').classList.add('active');
+      runAnalysis();
+    });
+
+    list.appendChild(card);
+  });
+}
+
 // Resize: re-render chart on window resize
 window.addEventListener('resize', () => {
   if (_lastChartState) {
@@ -2341,6 +3288,22 @@ document.addEventListener('keydown', e => {
   if (e.key === 'r' && !e.ctrlKey && document.activeElement.tagName !== 'INPUT') {
     runAnalysis();
   }
+});
+
+// ── Scanner event listeners ──
+document.getElementById('scanBtn').addEventListener('click', runMarketScan);
+document.getElementById('cancelScanBtn').addEventListener('click', () => {
+  _scanCancelled = true;
+  document.getElementById('cancelScanBtn').style.display = 'none';
+  document.getElementById('scanBtn').disabled = false;
+});
+
+document.querySelectorAll('.sort-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderScanResults(_scanResults, btn.dataset.sort);
+  });
 });
 
 </script>
