@@ -2539,6 +2539,7 @@ function renderOrderBlocks(obs, currentPrice) {
 }
 
 
+function renderOISparkline(hist) {
   const wrap = document.getElementById('oi-spark');
   if (!wrap || !hist || hist.length < 2) return;
   wrap.innerHTML = '';
