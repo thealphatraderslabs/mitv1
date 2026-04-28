@@ -2693,6 +2693,8 @@ function detectLiquidity(candles, highs, lows) {
     hasInducement: liquidityPresent,
   };
 }
+
+function renderOrderBlocks(obs, currentPrice) {
   const el = document.getElementById('ob-container');
   if (!el) return;
   if (!obs || obs.length === 0) {
